@@ -409,10 +409,48 @@ async function installUpdate() {
   } catch (e) {
     console.error("Update install failed:", e);
     isUpdating.value = false;
-    // Auto-install failed, offer to open download page instead
-    if (confirm(`Auto-update failed. Open download page instead?\n\nError: ${e}`)) {
+    // Auto-install failed, download the installer directly
+    await downloadInstallerDirectly();
+  }
+}
+
+// Fallback: Download the DMG/EXE directly from GitHub
+async function downloadInstallerDirectly() {
+  try {
+    const response = await fetch(
+      "https://github.com/GSredhill/pdfdk-desktop/releases/latest/download/latest.json"
+    );
+    const data = await response.json();
+
+    // Detect platform and get the right download URL
+    const platform = navigator.platform.toLowerCase();
+    let downloadUrl = "";
+
+    if (platform.includes("mac")) {
+      // Check if Apple Silicon or Intel
+      // navigator.userAgent contains "ARM" for Apple Silicon in some browsers
+      const isArmMac = navigator.userAgent.includes("ARM") ||
+                       (navigator as any).userAgentData?.platform === "macOS";
+
+      if (data.platforms["darwin-aarch64"]) {
+        // For simplicity, use aarch64 DMG - works on both via Rosetta
+        // Get the DMG URL from GitHub releases (not the .tar.gz)
+        downloadUrl = `https://github.com/GSredhill/pdfdk-desktop/releases/download/v${data.version}/PDF.dk.Desktop_${data.version}_aarch64.dmg`;
+      }
+    } else if (platform.includes("win")) {
+      // Windows - use the MSI installer
+      downloadUrl = `https://github.com/GSredhill/pdfdk-desktop/releases/download/v${data.version}/PDF.dk.Desktop_${data.version}_x64_en-US.msi`;
+    }
+
+    if (downloadUrl) {
+      await openUrl(downloadUrl);
+    } else {
+      // Fallback to download page if platform not detected
       await openUrl("https://pdf.dk/desktop");
     }
+  } catch (e) {
+    console.error("Failed to get download URL:", e);
+    await openUrl("https://pdf.dk/desktop");
   }
 }
 
