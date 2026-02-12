@@ -2015,16 +2015,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "keyring"
-version = "3.6.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eebcc3aff044e5944a8fbaf69eb277d11986064cba30c468730e8b9909fb551c"
-dependencies = [
- "log",
- "zeroize",
-]
-
-[[package]]
 name = "kqueue"
 version = "1.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2856,11 +2846,10 @@ checksum = "df94ce210e5bc13cb6651479fa48d14f601d9858cfe0467f43ae157023b938d3"
 
 [[package]]
 name = "pdfdk-desktop"
-version = "0.2.0"
+version = "0.2.2"
 dependencies = [
  "chrono",
  "dirs 5.0.1",
- "keyring",
  "notify 8.2.0",
  "notify-debouncer-full",
  "once_cell",

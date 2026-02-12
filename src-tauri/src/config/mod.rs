@@ -89,6 +89,7 @@ impl Default for AppConfig {
                 language: "da".to_string(),
             },
             tools: vec![],
+            auth: None,
         }
     }
 }
