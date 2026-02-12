@@ -17,6 +17,15 @@ pub enum ConfigError {
     ToolNotFound(String),
 }
 
+/// Saved authentication credentials
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthConfig {
+    pub token: Option<String>,
+    pub email: Option<String>,
+    pub password: Option<String>,
+}
+
 /// Main application configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -24,6 +33,8 @@ pub struct AppConfig {
     pub version: u32,
     pub general: GeneralSettings,
     pub tools: Vec<ToolConfig>,
+    #[serde(default)]
+    pub auth: Option<AuthConfig>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

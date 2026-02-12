@@ -1,16 +1,12 @@
 // Authentication module for PDF.dk Desktop
 // Handles login, token storage, and PRO subscription validation
 
-use keyring::Entry;
+use crate::config::{self, AuthConfig};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 const API_BASE_URL: &str = "https://pdf.dk/api";
-const KEYRING_SERVICE: &str = "dk.pdf.desktop";
-const KEYRING_USER: &str = "auth_token";
-const KEYRING_EMAIL: &str = "saved_email";
-const KEYRING_PASSWORD: &str = "saved_password";
 
 #[derive(Error, Debug)]
 pub enum AuthError {
@@ -234,83 +230,78 @@ pub async fn validate_token(token: &str) -> Result<AuthState, AuthError> {
     })
 }
 
-/// Save token to system keyring (secure storage)
+/// Save token to config file
 pub fn save_token(token: &str) -> Result<(), AuthError> {
-    let entry = Entry::new(KEYRING_SERVICE, KEYRING_USER)
-        .map_err(|e| AuthError::Keyring(e.to_string()))?;
+    let mut cfg = config::load_config().map_err(|e| AuthError::Keyring(e.to_string()))?;
 
-    entry
-        .set_password(token)
-        .map_err(|e| AuthError::Keyring(e.to_string()))?;
+    if cfg.auth.is_none() {
+        cfg.auth = Some(AuthConfig::default());
+    }
+    if let Some(ref mut auth) = cfg.auth {
+        auth.token = Some(token.to_string());
+    }
 
+    config::save_config(&cfg).map_err(|e| AuthError::Keyring(e.to_string()))?;
     Ok(())
 }
 
-/// Load token from system keyring
+/// Load token from config file
 pub fn load_token() -> Result<String, AuthError> {
-    let entry = Entry::new(KEYRING_SERVICE, KEYRING_USER)
-        .map_err(|e| AuthError::Keyring(e.to_string()))?;
+    let cfg = config::load_config().map_err(|e| AuthError::Keyring(e.to_string()))?;
 
-    entry
-        .get_password()
-        .map_err(|e| AuthError::Keyring(e.to_string()))
+    cfg.auth
+        .and_then(|a| a.token)
+        .ok_or_else(|| AuthError::Keyring("No saved token".to_string()))
 }
 
-/// Clear token from system keyring
+/// Clear token from config file
 pub fn clear_token() -> Result<(), AuthError> {
-    let entry = Entry::new(KEYRING_SERVICE, KEYRING_USER)
-        .map_err(|e| AuthError::Keyring(e.to_string()))?;
+    let mut cfg = config::load_config().map_err(|e| AuthError::Keyring(e.to_string()))?;
 
-    // Ignore errors if token doesn't exist
-    let _ = entry.delete_credential();
+    if let Some(ref mut auth) = cfg.auth {
+        auth.token = None;
+    }
 
+    config::save_config(&cfg).map_err(|e| AuthError::Keyring(e.to_string()))?;
     Ok(())
 }
 
-/// Save credentials to system keyring (for "Remember me" feature)
+/// Save credentials to config file (for "Remember me" feature)
 pub fn save_credentials(email: &str, password: &str) -> Result<(), AuthError> {
-    let email_entry = Entry::new(KEYRING_SERVICE, KEYRING_EMAIL)
-        .map_err(|e| AuthError::Keyring(e.to_string()))?;
-    let password_entry = Entry::new(KEYRING_SERVICE, KEYRING_PASSWORD)
-        .map_err(|e| AuthError::Keyring(e.to_string()))?;
+    let mut cfg = config::load_config().map_err(|e| AuthError::Keyring(e.to_string()))?;
 
-    email_entry
-        .set_password(email)
-        .map_err(|e| AuthError::Keyring(e.to_string()))?;
-    password_entry
-        .set_password(password)
-        .map_err(|e| AuthError::Keyring(e.to_string()))?;
+    if cfg.auth.is_none() {
+        cfg.auth = Some(AuthConfig::default());
+    }
+    if let Some(ref mut auth) = cfg.auth {
+        auth.email = Some(email.to_string());
+        auth.password = Some(password.to_string());
+    }
 
+    config::save_config(&cfg).map_err(|e| AuthError::Keyring(e.to_string()))?;
     Ok(())
 }
 
-/// Load saved credentials from system keyring
+/// Load saved credentials from config file
 pub fn load_credentials() -> Result<(String, String), AuthError> {
-    let email_entry = Entry::new(KEYRING_SERVICE, KEYRING_EMAIL)
-        .map_err(|e| AuthError::Keyring(e.to_string()))?;
-    let password_entry = Entry::new(KEYRING_SERVICE, KEYRING_PASSWORD)
-        .map_err(|e| AuthError::Keyring(e.to_string()))?;
+    let cfg = config::load_config().map_err(|e| AuthError::Keyring(e.to_string()))?;
 
-    let email = email_entry
-        .get_password()
-        .map_err(|e| AuthError::Keyring(e.to_string()))?;
-    let password = password_entry
-        .get_password()
-        .map_err(|e| AuthError::Keyring(e.to_string()))?;
+    let auth = cfg.auth.ok_or_else(|| AuthError::Keyring("No saved credentials".to_string()))?;
+    let email = auth.email.ok_or_else(|| AuthError::Keyring("No saved email".to_string()))?;
+    let password = auth.password.ok_or_else(|| AuthError::Keyring("No saved password".to_string()))?;
 
     Ok((email, password))
 }
 
-/// Clear saved credentials from system keyring
+/// Clear saved credentials from config file
 pub fn clear_credentials() -> Result<(), AuthError> {
-    let email_entry = Entry::new(KEYRING_SERVICE, KEYRING_EMAIL)
-        .map_err(|e| AuthError::Keyring(e.to_string()))?;
-    let password_entry = Entry::new(KEYRING_SERVICE, KEYRING_PASSWORD)
-        .map_err(|e| AuthError::Keyring(e.to_string()))?;
+    let mut cfg = config::load_config().map_err(|e| AuthError::Keyring(e.to_string()))?;
 
-    // Ignore errors if credentials don't exist
-    let _ = email_entry.delete_credential();
-    let _ = password_entry.delete_credential();
+    if let Some(ref mut auth) = cfg.auth {
+        auth.email = None;
+        auth.password = None;
+    }
 
+    config::save_config(&cfg).map_err(|e| AuthError::Keyring(e.to_string()))?;
     Ok(())
 }
