@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#4A90E2"/>
+      <stop offset="100%" style="stop-color:#2E5CB8"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Blue background with rounded corners -->
+  <rect width="1024" height="1024" rx="200" fill="url(#bgGrad)"/>
+
+  <!-- Drop shadow for document -->
+  <g transform="translate(10, 15)" opacity="0.2">
+    <path d="M280 140 L280 780 C280 820 310 850 350 850 L674 850 C714 850 744 820 744 780 L744 310 L574 140 L350 140 C310 140 280 170 280 210 Z" fill="black"/>
+  </g>
+
+  <!-- Document body - white fill with rounded corners -->
+  <path d="M270 130 L270 770 C270 810 300 840 340 840 L664 840 C704 840 734 810 734 770 L734 300 L564 130 L340 130 C300 130 270 160 270 200 Z"
+        fill="white"
+        fill-opacity="0.95"/>
+
+  <!-- Folded corner -->
+  <path d="M564 130 L564 260 C564 285 584 300 609 300 L734 300"
+        fill="none"
+        stroke="white"
+        stroke-width="0"/>
+  <path d="M564 130 L564 250 C564 280 590 300 620 300 L734 300 L564 130 Z"
+        fill="#E8E8E8"/>
+
+  <!-- PDF.DK text centered in document -->
+  <text x="502" y="540"
+        font-family="system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif"
+        font-size="100"
+        font-weight="700"
+        fill="#2E5CB8"
+        text-anchor="middle">PDF.DK</text>
+</svg>
