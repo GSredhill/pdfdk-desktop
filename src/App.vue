@@ -388,12 +388,42 @@ function toggleLogs() {
 async function checkForUpdates() {
   try {
     currentVersion.value = await getVersion();
-    const update = await check();
-    if (update) {
-      updateAvailable.value = update;
-      console.log(`Update available: ${update.version}`);
+
+    // Try Tauri's built-in updater first
+    try {
+      const update = await check();
+      if (update) {
+        updateAvailable.value = update;
+        console.log(`Update available via Tauri: ${update.version}`);
+        return;
+      }
+    } catch (tauriError) {
+      console.log("Tauri updater failed, trying manual check:", tauriError);
     }
-  } catch (e) {
+
+    // Fallback: Manual version check via GitHub API
+    try {
+      const response = await fetch(
+        "https://github.com/GSredhill/pdfdk-desktop/releases/latest/download/latest.json"
+      );
+      const data = await response.json();
+      const latestVersion = data.version;
+
+      if (latestVersion && latestVersion !== currentVersion.value) {
+        // Create a fake Update object for the button
+        updateAvailable.value = {
+          version: latestVersion,
+          downloadAndInstall: async () => {
+            // This will fail and trigger the fallback
+            throw new Error("Manual update - use direct download");
+          }
+        } as any;
+        console.log(`Update available via manual check: ${latestVersion}`);
+      }
+    } catch (fetchError) {
+      console.log("Manual update check also failed:", fetchError);
+    }
+  } catch (e: any) {
     console.error("Update check failed:", e);
   }
 }

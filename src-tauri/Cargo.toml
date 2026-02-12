@@ -1,6 +1,6 @@
 [package]
 name = "pdfdk-desktop"
-version = "0.2.8"
+version = "0.2.9"
 description = "PDF.dk Desktop - Watched folders for automatic PDF processing"
 authors = ["PDF.dk"]
 edition = "2021"
