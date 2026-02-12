@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { ref, onMounted, computed } from "vue";
 import { invoke } from "@tauri-apps/api/core";
+import { getVersion } from "@tauri-apps/api/app";
 import { open } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { check } from "@tauri-apps/plugin-updater";
+import { check, type Update } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
 
 // Types
@@ -97,6 +98,11 @@ const toolOptions = ref<Record<string, unknown>>({});
 const logs = ref<string[]>([]);
 const showLogs = ref(false);
 let logInterval: ReturnType<typeof setInterval> | null = null;
+
+// Update state
+const updateAvailable = ref<Update | null>(null);
+const currentVersion = ref("");
+const isUpdating = ref(false);
 
 // Computed
 const enabledTools = computed(() => {
@@ -378,19 +384,35 @@ function toggleLogs() {
   }
 }
 
-// Check for updates
+// Check for updates (but don't install - show button instead)
 async function checkForUpdates() {
   try {
+    currentVersion.value = await getVersion();
     const update = await check();
     if (update) {
+      updateAvailable.value = update;
       console.log(`Update available: ${update.version}`);
-      // Download and install the update
-      await update.downloadAndInstall();
-      // Relaunch the app to apply the update
-      await relaunch();
     }
   } catch (e) {
     console.error("Update check failed:", e);
+  }
+}
+
+// Install update when user clicks the button
+async function installUpdate() {
+  if (!updateAvailable.value) return;
+
+  isUpdating.value = true;
+  try {
+    await updateAvailable.value.downloadAndInstall();
+    await relaunch();
+  } catch (e) {
+    console.error("Update install failed:", e);
+    isUpdating.value = false;
+    // Auto-install failed, offer to open download page instead
+    if (confirm(`Auto-update failed. Open download page instead?\n\nError: ${e}`)) {
+      await openUrl("https://pdf.dk/desktop");
+    }
   }
 }
 
@@ -483,6 +505,14 @@ onMounted(async () => {
           <h1>PDF.dk Desktop</h1>
         </div>
         <div class="header-right">
+          <button
+            v-if="updateAvailable"
+            @click="installUpdate"
+            class="btn-update"
+            :disabled="isUpdating"
+          >
+            {{ isUpdating ? 'Updating...' : `Update to v${updateAvailable.version}` }}
+          </button>
           <span class="user-email">{{ authState.user?.email }}</span>
           <span class="plan-badge" :class="planClass">{{ displayPlan }}</span>
           <span v-if="authState.isUnlimited" class="usage-text">Unlimited</span>
@@ -653,7 +683,7 @@ onMounted(async () => {
       </div>
 
       <footer class="footer">
-        <p>PDF.dk Desktop v0.2.4 • Files are processed via pdf.dk API • <a href="#" @click.prevent="toggleLogs" class="footer-link">{{ showLogs ? 'Hide Logs' : 'Logs' }}</a></p>
+        <p>PDF.dk Desktop v{{ currentVersion || '...' }} • Files are processed via pdf.dk API • <a href="#" @click.prevent="toggleLogs" class="footer-link">{{ showLogs ? 'Hide Logs' : 'Logs' }}</a></p>
       </footer>
 
       <!-- Debug Logs Panel -->
@@ -945,6 +975,34 @@ body {
 
 .btn-text:hover {
   color: var(--text);
+}
+
+/* Update button */
+.btn-update {
+  background: #22c55e;
+  color: white;
+  border: none;
+  padding: 0.5rem 1rem;
+  border-radius: 6px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  cursor: pointer;
+  animation: pulse 2s infinite;
+}
+
+.btn-update:hover {
+  background: #16a34a;
+}
+
+.btn-update:disabled {
+  opacity: 0.7;
+  cursor: wait;
+  animation: none;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.8; }
 }
 
 .content {
