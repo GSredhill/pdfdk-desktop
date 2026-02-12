@@ -653,7 +653,7 @@ onMounted(async () => {
       </div>
 
       <footer class="footer">
-        <p>PDF.dk Desktop v0.2.3 • Files are processed via pdf.dk API • <a href="#" @click.prevent="toggleLogs" class="footer-link">{{ showLogs ? 'Hide Logs' : 'Logs' }}</a></p>
+        <p>PDF.dk Desktop v0.2.4 • Files are processed via pdf.dk API • <a href="#" @click.prevent="toggleLogs" class="footer-link">{{ showLogs ? 'Hide Logs' : 'Logs' }}</a></p>
       </footer>
 
       <!-- Debug Logs Panel -->
