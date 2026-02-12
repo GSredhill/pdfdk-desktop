@@ -3,6 +3,8 @@ import { ref, onMounted, computed } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { check } from "@tauri-apps/plugin-updater";
+import { relaunch } from "@tauri-apps/plugin-process";
 
 // Types
 interface User {
@@ -376,8 +378,27 @@ function toggleLogs() {
   }
 }
 
+// Check for updates
+async function checkForUpdates() {
+  try {
+    const update = await check();
+    if (update) {
+      console.log(`Update available: ${update.version}`);
+      // Download and install the update
+      await update.downloadAndInstall();
+      // Relaunch the app to apply the update
+      await relaunch();
+    }
+  } catch (e) {
+    console.error("Update check failed:", e);
+  }
+}
+
 // Initialize
 onMounted(async () => {
+  // Check for updates in background
+  checkForUpdates();
+
   await checkAuth();
   if (currentView.value === "login") {
     await loadSavedCredentials();
@@ -632,7 +653,7 @@ onMounted(async () => {
       </div>
 
       <footer class="footer">
-        <p>PDF.dk Desktop v0.2.2 • Files are processed via pdf.dk API • <a href="#" @click.prevent="toggleLogs" class="footer-link">{{ showLogs ? 'Hide Logs' : 'Logs' }}</a></p>
+        <p>PDF.dk Desktop v0.2.3 • Files are processed via pdf.dk API • <a href="#" @click.prevent="toggleLogs" class="footer-link">{{ showLogs ? 'Hide Logs' : 'Logs' }}</a></p>
       </footer>
 
       <!-- Debug Logs Panel -->
