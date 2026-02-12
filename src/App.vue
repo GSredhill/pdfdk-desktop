@@ -427,15 +427,14 @@ async function downloadInstallerDirectly() {
     let downloadUrl = "";
 
     if (platform.includes("mac")) {
-      // Check if Apple Silicon or Intel
-      // navigator.userAgent contains "ARM" for Apple Silicon in some browsers
+      // Check if Apple Silicon or Intel based on userAgent
       const isArmMac = navigator.userAgent.includes("ARM") ||
                        (navigator as any).userAgentData?.platform === "macOS";
 
-      if (data.platforms["darwin-aarch64"]) {
-        // For simplicity, use aarch64 DMG - works on both via Rosetta
-        // Get the DMG URL from GitHub releases (not the .tar.gz)
+      if (isArmMac && data.platforms["darwin-aarch64"]) {
         downloadUrl = `https://github.com/GSredhill/pdfdk-desktop/releases/download/v${data.version}/PDF.dk.Desktop_${data.version}_aarch64.dmg`;
+      } else if (data.platforms["darwin-x86_64"]) {
+        downloadUrl = `https://github.com/GSredhill/pdfdk-desktop/releases/download/v${data.version}/PDF.dk.Desktop_${data.version}_x64.dmg`;
       }
     } else if (platform.includes("win")) {
       // Windows - use the MSI installer
