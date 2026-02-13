@@ -403,11 +403,12 @@ async function checkForUpdates() {
 
     // Fallback: Manual version check via GitHub API
     try {
-      const response = await fetch(
-        "https://github.com/GSredhill/pdfdk-desktop/releases/latest/download/latest.json"
+      // Use GitHub API to get latest release info (more reliable than direct file fetch)
+      const apiResponse = await fetch(
+        "https://api.github.com/repos/GSredhill/pdfdk-desktop/releases/latest"
       );
-      const data = await response.json();
-      const latestVersion = data.version;
+      const releaseData = await apiResponse.json();
+      const latestVersion = releaseData.tag_name?.replace(/^v/, '') || '';
 
       if (latestVersion && latestVersion !== currentVersion.value) {
         // Create a fake Update object for the button
@@ -447,28 +448,36 @@ async function installUpdate() {
 // Fallback: Download the DMG/EXE directly from GitHub
 async function downloadInstallerDirectly() {
   try {
+    // Use GitHub API to get latest release assets
     const response = await fetch(
-      "https://github.com/GSredhill/pdfdk-desktop/releases/latest/download/latest.json"
+      "https://api.github.com/repos/GSredhill/pdfdk-desktop/releases/latest"
     );
-    const data = await response.json();
+    const releaseData = await response.json();
+    const version = releaseData.tag_name?.replace(/^v/, '') || '';
+    const assets = releaseData.assets || [];
 
     // Detect platform and get the right download URL
     const platform = navigator.platform.toLowerCase();
     let downloadUrl = "";
 
     if (platform.includes("mac")) {
-      // Check if Apple Silicon or Intel based on userAgent
+      // Check if Apple Silicon or Intel
       const isArmMac = navigator.userAgent.includes("ARM") ||
                        (navigator as any).userAgentData?.platform === "macOS";
 
-      if (isArmMac && data.platforms["darwin-aarch64"]) {
-        downloadUrl = `https://github.com/GSredhill/pdfdk-desktop/releases/download/v${data.version}/PDF.dk.Desktop_${data.version}_aarch64.dmg`;
-      } else if (data.platforms["darwin-x86_64"]) {
-        downloadUrl = `https://github.com/GSredhill/pdfdk-desktop/releases/download/v${data.version}/PDF.dk.Desktop_${data.version}_x64.dmg`;
+      if (isArmMac) {
+        // Find aarch64 DMG
+        const asset = assets.find((a: any) => a.name.includes('aarch64') && a.name.endsWith('.dmg'));
+        downloadUrl = asset?.browser_download_url || '';
+      } else {
+        // Find x64 DMG
+        const asset = assets.find((a: any) => a.name.includes('x64') && a.name.endsWith('.dmg') && !a.name.includes('aarch64'));
+        downloadUrl = asset?.browser_download_url || '';
       }
     } else if (platform.includes("win")) {
-      // Windows - use the MSI installer
-      downloadUrl = `https://github.com/GSredhill/pdfdk-desktop/releases/download/v${data.version}/PDF.dk.Desktop_${data.version}_x64_en-US.msi`;
+      // Find Windows MSI installer
+      const asset = assets.find((a: any) => a.name.endsWith('.msi'));
+      downloadUrl = asset?.browser_download_url || '';
     }
 
     if (downloadUrl) {
