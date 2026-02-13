@@ -453,7 +453,6 @@ async function downloadInstallerDirectly() {
       "https://api.github.com/repos/GSredhill/pdfdk-desktop/releases/latest"
     );
     const releaseData = await response.json();
-    const version = releaseData.tag_name?.replace(/^v/, '') || '';
     const assets = releaseData.assets || [];
 
     // Detect platform and get the right download URL
