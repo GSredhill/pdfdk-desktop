@@ -96,7 +96,7 @@ async fn login(
             result.jobs_limit = Some(usage.limit);
             result.jobs_used = Some(usage.used);
             result.jobs_remaining = Some(usage.limit - usage.used);
-            result.max_file_size_mb = Some(500); // Default, could be fetched from API
+            result.max_file_size_mb = usage.max_file_size_mb.or(Some(100)); // From API, fallback to 100MB
             result.is_unlimited = Some(usage.is_unlimited);
         }
     }
@@ -155,7 +155,7 @@ async fn check_auth(state: tauri::State<'_, AppState>) -> Result<auth::AuthState
                 auth_result.jobs_limit = Some(usage.limit);
                 auth_result.jobs_used = Some(usage.used);
                 auth_result.jobs_remaining = Some(usage.limit - usage.used);
-                auth_result.max_file_size_mb = Some(500); // Default
+                auth_result.max_file_size_mb = usage.max_file_size_mb.or(Some(100)); // From API, fallback to 100MB
                 auth_result.is_unlimited = Some(usage.is_unlimited);
             }
 

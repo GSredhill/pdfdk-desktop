@@ -70,6 +70,8 @@ pub struct UsageStatusData {
     pub is_authenticated: bool,
     #[serde(default)]
     pub batch_upload: bool,
+    #[serde(default)]
+    pub max_file_size_mb: Option<i32>,
 }
 
 // Response from job status polling
