@@ -1,0 +1,117 @@
+// In-app strings. Danish is the product's language and the default, as on
+// the website; tool names and option labels come from the API in both.
+import { computed, ref } from "vue";
+
+export type Lang = "da" | "en";
+export const lang = ref<Lang>("da");
+
+const strings: Record<string, { da: string; en: string }> = {
+  appName: { da: "PDF.dk Desktop", en: "PDF.dk Desktop" },
+  loading: { da: "Indlæser…", en: "Loading…" },
+
+  // login
+  signInTitle: { da: "Log ind på din konto", en: "Sign in to your account" },
+  signInSub: { da: "Samme konto som på pdf.dk", en: "The same account as on pdf.dk" },
+  email: { da: "E-mail", en: "Email" },
+  password: { da: "Adgangskode", en: "Password" },
+  rememberMe: { da: "Husk mig på denne computer", en: "Remember me on this computer" },
+  signIn: { da: "Log ind", en: "Sign in" },
+  signingIn: { da: "Logger ind…", en: "Signing in…" },
+  createAccount: { da: "Opret gratis konto", en: "Create a free account" },
+  forgotPassword: { da: "Glemt adgangskode?", en: "Forgot password?" },
+  planNote: { da: "Gratis: 20 kørsler pr. måned · Pro: ubegrænset", en: "Free: 20 runs per month · Pro: unlimited" },
+  loginFailed: { da: "Kunne ikke logge ind", en: "Could not sign in" },
+
+  // header / nav
+  tools: { da: "Værktøjer", en: "Tools" },
+  activity: { da: "Aktivitet", en: "Activity" },
+  settings: { da: "Indstillinger", en: "Settings" },
+  openWebsite: { da: "Åbn pdf.dk", en: "Open pdf.dk" },
+  signOut: { da: "Log ud", en: "Sign out" },
+  unlimited: { da: "Ubegrænset", en: "Unlimited" },
+  runsThisMonth: { da: "kørsler denne måned", en: "runs this month" },
+  updateTo: { da: "Opdater til v{v}", en: "Update to v{v}" },
+  updating: { da: "Opdaterer…", en: "Updating…" },
+
+  // tools view
+  watchedFolders: { da: "Overvågede mapper", en: "Watched folders" },
+  watchedFoldersDesc: { da: "Læg filer i en mappe, så behandles de automatisk og lander i Processed/. Originalen flyttes til Originals/.", en: "Drop files into a folder and they are processed automatically into Processed/. The original moves to Originals/." },
+  dropHint: { da: "Eller træk filer herind for at behandle dem med det samme", en: "Or drag files here to process them right away" },
+  enable: { da: "Vælg mappe og slå til", en: "Choose folder and enable" },
+  changeFolder: { da: "Skift mappe", en: "Change folder" },
+  disable: { da: "Slå fra", en: "Disable" },
+  options: { da: "Indstillinger", en: "Options" },
+  accepts: { da: "Tager", en: "Takes" },
+  enabledCount: { da: "{n} mapper overvåges", en: "{n} folders watched" },
+  noTools: { da: "Ingen værktøjer kunne hentes. Tjek forbindelsen og prøv igen.", en: "No tools could be loaded. Check the connection and try again." },
+  refreshTools: { da: "Hent værktøjer igen", en: "Reload tools" },
+  filterTools: { da: "Søg værktøj…", en: "Search tools…" },
+  showAll: { da: "Alle", en: "All" },
+  onlyEnabled: { da: "Kun aktive", en: "Enabled only" },
+
+  // options modal
+  optionsFor: { da: "Indstillinger for {tool}", en: "Options for {tool}" },
+  noOptions: { da: "Dette værktøj har ingen indstillinger.", en: "This tool has no options." },
+  cancel: { da: "Annullér", en: "Cancel" },
+  save: { da: "Gem", en: "Save" },
+  required: { da: "påkrævet", en: "required" },
+
+  // quick action (dropped / opened files)
+  quickTitle: { da: "Hvad skal der ske med filerne?", en: "What should happen to the files?" },
+  quickSub: { da: "{n} filer · resultatet gemmes ved siden af originalen", en: "{n} files · the result is saved next to the original" },
+  run: { da: "Kør", en: "Run" },
+  running: { da: "Kører…", en: "Running…" },
+  noToolForFile: { da: "Intet værktøj tager denne filtype", en: "No tool takes this file type" },
+  done: { da: "Færdig", en: "Done" },
+  failed: { da: "Fejlede", en: "Failed" },
+  showInFolder: { da: "Vis i mappe", en: "Show in folder" },
+  close: { da: "Luk", en: "Close" },
+
+  // activity
+  recentJobs: { da: "Seneste kørsler", en: "Recent runs" },
+  noJobs: { da: "Ingen kørsler endnu. Læg en fil i en overvåget mappe, eller træk en fil ind i appen.", en: "No runs yet. Drop a file into a watched folder, or drag a file into the app." },
+  logs: { da: "Log", en: "Log" },
+  clearLogs: { da: "Ryd", en: "Clear" },
+  statusQueued: { da: "I kø", en: "Queued" },
+  statusUploading: { da: "Uploader", en: "Uploading" },
+  statusProcessing: { da: "Behandler", en: "Processing" },
+  statusCompleted: { da: "Færdig", en: "Done" },
+  statusFailed: { da: "Fejlede", en: "Failed" },
+
+  // settings
+  general: { da: "Generelt", en: "General" },
+  language: { da: "Sprog", en: "Language" },
+  theme: { da: "Udseende", en: "Appearance" },
+  themeSystem: { da: "Som systemet", en: "Follow system" },
+  themeLight: { da: "Lyst", en: "Light" },
+  themeDark: { da: "Mørkt", en: "Dark" },
+  startOnLogin: { da: "Start ved login", en: "Start at login" },
+  startOnLoginDesc: { da: "Appen starter i baggrunden, når du logger ind på computeren.", en: "The app starts in the background when you sign in to the computer." },
+  notifications: { da: "Notifikationer", en: "Notifications" },
+  notificationsDesc: { da: "Besked når en fil er færdig eller fejler.", en: "A notice when a file finishes or fails." },
+  account: { da: "Konto", en: "Account" },
+  plan: { da: "Abonnement", en: "Plan" },
+  managePlan: { da: "Administrér på pdf.dk", en: "Manage on pdf.dk" },
+  about: { da: "Om", en: "About" },
+  version: { da: "Version", en: "Version" },
+  processedVia: { da: "Filer behandles på pdf.dk's servere i Norden og slettes automatisk bagefter.", en: "Files are processed on pdf.dk's servers in the Nordics and deleted automatically afterwards." },
+  checkUpdates: { da: "Søg efter opdatering", en: "Check for updates" },
+  upToDate: { da: "Du har den nyeste version", en: "You have the latest version" },
+};
+
+export function t(key: string, vars?: Record<string, string | number>): string {
+  const entry = strings[key];
+  let s = entry ? entry[lang.value] : key;
+  if (vars) {
+    for (const [k, v] of Object.entries(vars)) s = s.replace(`{${k}}`, String(v));
+  }
+  return s;
+}
+
+/** Pick the current language from a {da,en} object the API sends. */
+export function bi(obj: { da?: string; en?: string } | null | undefined): string {
+  if (!obj) return "";
+  return (lang.value === "en" ? obj.en || obj.da : obj.da || obj.en) || "";
+}
+
+export const isDa = computed(() => lang.value === "da");

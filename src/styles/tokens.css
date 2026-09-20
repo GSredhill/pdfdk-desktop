@@ -1,0 +1,163 @@
+/* PDF.dk Desktop — the website's design tokens, so the app looks like the
+   same product. Fonts are bundled (public/fonts). Light is the base; dark
+   follows the OS or the in-app setting via html[data-theme]. */
+
+@font-face {
+  font-family: 'Schibsted Grotesk';
+  src: url('/fonts/schibsted-grotesk-var.woff2') format('woff2');
+  font-weight: 400 900;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Spline Sans Mono';
+  src: url('/fonts/spline-sans-mono-var.woff2') format('woff2');
+  font-weight: 400 600;
+  font-display: swap;
+}
+
+:root {
+  --font: 'Schibsted Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --mono: 'Spline Sans Mono', ui-monospace, Menlo, monospace;
+
+  --bg: #F6F7FA;
+  --text: #0F1117;
+  --text2: #2C3140;
+  --muted: #5B6072;
+  --faint: #9AA0B2;
+  --card: #FFFFFF;
+  --panel: #FFFFFF;
+  --cardline: #E5E8EE;
+  --line: #E6E8EE;
+  --inset: #F7F8FB;
+  --track: #D7DBE3;
+  --brand: #3B4BE8;
+  --brandSoft: rgba(59, 75, 232, 0.08);
+  --brandLine: rgba(59, 75, 232, 0.22);
+  --ok: #1F9D62;
+  --okSoft: rgba(31, 157, 98, 0.10);
+  --warn: #D97706;
+  --warnSoft: rgba(217, 119, 6, 0.10);
+  --bad: #DC2626;
+  --badSoft: rgba(220, 38, 38, 0.08);
+
+  /* category accents (site: CATEGORY_HUES) */
+  --cat-optimer: #3B4BE8;
+  --cat-organiser: #0E9E8E;
+  --cat-konverter: #7C5CFF;
+  --cat-rediger: #E07B39;
+  --cat-sikkerhed: #1F9D62;
+  --cat-tryk: #D6477D;
+
+  --radius: 14px;
+  --radius-sm: 9px;
+  --shadow: 0 1px 2px rgba(15, 17, 23, 0.04), 0 8px 24px -12px rgba(15, 17, 23, 0.12);
+  color-scheme: light;
+}
+
+html[data-theme="dark"] {
+  --bg: #0B0D14;
+  --text: #F2F3F7;
+  --text2: #AEB2BE;
+  --muted: #969AA6;
+  --faint: #666A76;
+  --card: rgba(255, 255, 255, 0.04);
+  --panel: #161A26;
+  --cardline: rgba(255, 255, 255, 0.12);
+  --line: rgba(255, 255, 255, 0.10);
+  --inset: rgba(255, 255, 255, 0.03);
+  --track: rgba(255, 255, 255, 0.14);
+  --brand: #5B82FF;
+  --brandSoft: rgba(91, 130, 255, 0.14);
+  --brandLine: rgba(91, 130, 255, 0.30);
+  --ok: #34C97E;
+  --okSoft: rgba(52, 201, 126, 0.14);
+  --warn: #F2934E;
+  --warnSoft: rgba(242, 147, 78, 0.14);
+  --bad: #F87171;
+  --badSoft: rgba(248, 113, 113, 0.12);
+  --cat-optimer: #5B82FF;
+  --cat-organiser: #19C2AE;
+  --cat-konverter: #9C82FF;
+  --cat-rediger: #F2934E;
+  --cat-sikkerhed: #34C97E;
+  --cat-tryk: #FF6FA0;
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 12px 30px -14px rgba(0, 0, 0, 0.6);
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; height: 100%; }
+body {
+  font-family: var(--font);
+  font-size: 13.5px;
+  line-height: 1.45;
+  color: var(--text);
+  background: var(--bg);
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+  cursor: default;
+  overflow: hidden;
+}
+input, textarea, select, button { font-family: inherit; font-size: inherit; color: inherit; }
+input, textarea { user-select: text; cursor: text; }
+a { color: var(--brand); text-decoration: none; }
+h1, h2, h3, h4 { margin: 0; font-weight: 800; letter-spacing: -0.01em; }
+.mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+
+/* wordmark, as on the site */
+.pdk-brand { font-weight: 900; letter-spacing: -0.06em; color: var(--text); }
+.pdk-brand .pdk-dot { display: inline-block; width: 0.2em; height: 0.2em; border-radius: 50%; background: var(--brand); margin: 0 0.07em; }
+
+/* shared controls */
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+  height: 34px; padding: 0 14px; border-radius: 10px; border: 1px solid var(--cardline);
+  background: var(--card); color: var(--text); font-weight: 700; font-size: 12.5px; cursor: pointer;
+  transition: background .15s, border-color .15s, transform .1s;
+}
+.btn:hover { border-color: var(--brandLine); background: var(--brandSoft); }
+.btn:active { transform: translateY(1px); }
+.btn:disabled { opacity: .5; cursor: default; transform: none; }
+.btn-primary { background: var(--brand); border-color: var(--brand); color: #fff; }
+.btn-primary:hover { background: var(--brand); filter: brightness(1.08); }
+.btn-ghost { border-color: transparent; background: transparent; }
+.btn-ghost:hover { background: var(--brandSoft); border-color: transparent; }
+.btn-danger { color: var(--bad); }
+.btn-danger:hover { background: var(--badSoft); border-color: var(--badSoft); }
+.btn-sm { height: 28px; padding: 0 10px; font-size: 12px; border-radius: 8px; }
+.btn-lg { height: 40px; padding: 0 18px; font-size: 13.5px; border-radius: 11px; }
+
+.field { display: flex; flex-direction: column; gap: 6px; }
+.field label { font-size: 11.5px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }
+.input, select.input {
+  height: 36px; padding: 0 11px; border-radius: 10px; border: 1px solid var(--cardline);
+  background: var(--inset); color: var(--text); outline: none; width: 100%;
+}
+.input:focus { border-color: var(--brand); box-shadow: 0 0 0 3px var(--brandSoft); }
+select.input { appearance: none; padding-right: 30px; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%239AA0B2' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 10px center; }
+
+.switch { position: relative; width: 36px; height: 22px; border-radius: 11px; background: var(--track); border: 0; cursor: pointer; padding: 0; transition: background .15s; flex: none; }
+.switch::after { content: ''; position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%; background: #fff; transition: transform .15s; box-shadow: 0 1px 2px rgba(0,0,0,.2); }
+.switch.on { background: var(--brand); }
+.switch.on::after { transform: translateX(14px); }
+
+.pill { display: inline-flex; align-items: center; gap: 5px; height: 22px; padding: 0 8px; border-radius: 999px; font-size: 11px; font-weight: 800; letter-spacing: .05em; text-transform: uppercase; }
+.pill-brand { background: var(--brandSoft); color: var(--brand); }
+.pill-ok { background: var(--okSoft); color: var(--ok); }
+.pill-warn { background: var(--warnSoft); color: var(--warn); }
+.pill-bad { background: var(--badSoft); color: var(--bad); }
+.pill-muted { background: var(--inset); color: var(--muted); border: 1px solid var(--cardline); }
+
+.card { background: var(--card); border: 1px solid var(--cardline); border-radius: var(--radius); box-shadow: var(--shadow); }
+
+.spin { width: 18px; height: 18px; border: 2px solid var(--track); border-top-color: var(--brand); border-radius: 50%; animation: spin .8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* scrollbars, quietly */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb { background: var(--track); border-radius: 10px; border: 3px solid transparent; background-clip: content-box; }
+::-webkit-scrollbar-track { background: transparent; }
+
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; animation-duration: 0.01ms !important; }
+}

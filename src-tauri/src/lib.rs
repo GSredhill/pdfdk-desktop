@@ -1,5 +1,6 @@
 // PDF.dk Desktop - Main library
-// Watched folders for automatic PDF processing
+// Watched folders, "open with", drag-and-drop: every file goes through the
+// website's API with the tool the user chose.
 
 mod api;
 mod auth;
@@ -7,130 +8,187 @@ mod config;
 mod processor;
 mod watcher;
 
-use config::AppConfig;
+use config::{AppConfig, ToolConfig, ToolDefinition};
+use once_cell::sync::Lazy;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use tauri::{
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    Manager, Runtime, AppHandle,
+    AppHandle, Emitter, Manager, RunEvent, Runtime,
 };
+use tauri_plugin_autostart::ManagerExt as AutostartExt;
 use tauri_plugin_notification::NotificationExt;
 use tokio::sync::RwLock;
 use tracing::{error, info};
-use once_cell::sync::Lazy;
 
-// Global log buffer for debug viewing in the app
+// ------------------------------------------------------------ log buffer
+
 static LOG_BUFFER: Lazy<Mutex<Vec<String>>> = Lazy::new(|| Mutex::new(Vec::new()));
 
-/// Add a log message to the buffer (callable from anywhere)
 pub fn add_log(message: &str) {
     let timestamp = chrono::Local::now().format("%H:%M:%S").to_string();
     let log_entry = format!("[{}] {}", timestamp, message);
-
-    // Also print to console
     println!("{}", log_entry);
-
     if let Ok(mut logs) = LOG_BUFFER.lock() {
         logs.push(log_entry);
-        // Keep only last 500 logs
         if logs.len() > 500 {
             logs.remove(0);
         }
     }
 }
 
-// App state shared across the application
+// ------------------------------------------------------------- job list
+
+static JOBS: Lazy<Mutex<Vec<processor::Job>>> = Lazy::new(|| Mutex::new(Vec::new()));
+
+fn job_add(job: processor::Job) -> String {
+    let id = job.id.clone();
+    if let Ok(mut jobs) = JOBS.lock() {
+        jobs.insert(0, job);
+        jobs.truncate(200);
+    }
+    id
+}
+
+fn job_update(id: &str, f: impl FnOnce(&mut processor::Job)) {
+    if let Ok(mut jobs) = JOBS.lock() {
+        if let Some(j) = jobs.iter_mut().find(|j| j.id == id) {
+            f(j);
+        }
+    }
+}
+
+// ------------------------------------------------------------- app state
+
 pub struct AppState {
     pub config: Arc<RwLock<AppConfig>>,
     pub auth: Arc<RwLock<auth::AuthState>>,
     pub watcher: Arc<RwLock<Option<watcher::FolderWatcher>>>,
+    pub catalog: Arc<RwLock<Vec<ToolDefinition>>>,
+    /// files handed to us by the OS before the window was ready
+    pub pending_files: Mutex<Vec<String>>,
 }
 
-// Tauri commands exposed to the frontend
+fn notify<R: Runtime>(app: &AppHandle<R>, cfg: &Arc<RwLock<AppConfig>>, title: &str, body: &str) {
+    let enabled = cfg.try_read().map(|c| c.general.show_notifications).unwrap_or(true);
+    if enabled {
+        let _ = app.notification().builder().title(title).body(body).show();
+    }
+}
+
+fn tool_label(tc: &ToolConfig, lang: &str) -> String {
+    match &tc.name {
+        Some(b) if lang == "en" && !b.en.is_empty() => b.en.clone(),
+        Some(b) if !b.da.is_empty() => b.da.clone(),
+        _ => tc.id.clone(),
+    }
+}
+
+/// Consume watcher events: run the job, track it, notify.
+fn spawn_event_loop(app: AppHandle, state_auth: Arc<RwLock<auth::AuthState>>, state_cfg: Arc<RwLock<AppConfig>>, mut rx: tokio::sync::broadcast::Receiver<watcher::FileEvent>) {
+    tokio::spawn(async move {
+        while let Ok(event) = rx.recv().await {
+            let file_name = event.path.file_name().and_then(|n| n.to_str()).unwrap_or("file").to_string();
+            let lang = state_cfg.read().await.general.language.clone();
+            let label = tool_label(&event.tool_config, &lang);
+            add_log(&format!("{} → {}", file_name, label));
+
+            let job_id = job_add(processor::Job::new(&event.tool_id, &label, &event.path.to_string_lossy()));
+            job_update(&job_id, |j| j.set_processing());
+
+            let token = state_auth.read().await.token.clone();
+            match watcher::process_file_event(event.clone(), token).await {
+                Ok(output_path) => {
+                    add_log(&format!("OK: {} → {:?}", file_name, output_path));
+                    job_update(&job_id, |j| j.set_completed(&output_path.to_string_lossy()));
+                    notify(&app, &state_cfg, &format!("{} · PDF.dk", label), &if lang == "en" { format!("{} is done", file_name) } else { format!("{} er færdig", file_name) });
+                }
+                Err(e) => {
+                    let msg = e.to_string();
+                    add_log(&format!("FAILED: {} — {}", file_name, msg));
+                    job_update(&job_id, |j| j.set_failed(&msg));
+                    notify(&app, &state_cfg, &format!("{} · PDF.dk", label), &format!("{}: {}", file_name, msg));
+                }
+            }
+        }
+    });
+}
+
+async fn ensure_watcher(app: &AppHandle, state: &AppState) -> Result<(), String> {
+    let mut guard = state.watcher.write().await;
+    if guard.is_none() {
+        let (w, rx) = watcher::FolderWatcher::new().map_err(|e| format!("Failed to create file watcher: {}", e))?;
+        spawn_event_loop(app.clone(), state.auth.clone(), state.config.clone(), rx);
+        *guard = Some(w);
+    }
+    Ok(())
+}
+
+// -------------------------------------------------------------- commands
 
 #[tauri::command]
 async fn get_config(state: tauri::State<'_, AppState>) -> Result<AppConfig, String> {
-    let config = state.config.read().await;
-    Ok(config.clone())
+    Ok(state.config.read().await.clone())
 }
 
 #[tauri::command]
-async fn save_config(
-    state: tauri::State<'_, AppState>,
-    new_config: AppConfig,
-) -> Result<(), String> {
-    let mut config = state.config.write().await;
-    *config = new_config.clone();
-    config::save_config(&new_config).map_err(|e| e.to_string())?;
-
-    // Restart watcher with new config
-    let mut watcher = state.watcher.write().await;
-    if let Some(w) = watcher.take() {
-        drop(w);
+async fn save_config(app: AppHandle, state: tauri::State<'_, AppState>, new_config: AppConfig) -> Result<(), String> {
+    {
+        let mut config = state.config.write().await;
+        *config = new_config.clone();
     }
-    // Will be restarted by the watcher manager
-
+    config::save_config(&new_config).map_err(|e| e.to_string())?;
+    // start-at-login follows the setting
+    let al = app.autolaunch();
+    let res = if new_config.general.start_on_login { al.enable() } else { al.disable() };
+    if let Err(e) = res {
+        add_log(&format!("autostart: {}", e));
+    }
     Ok(())
 }
 
 #[tauri::command]
 async fn get_auth_state(state: tauri::State<'_, AppState>) -> Result<auth::AuthState, String> {
-    let auth = state.auth.read().await;
-    Ok(auth.clone())
+    Ok(state.auth.read().await.clone())
 }
 
-#[tauri::command]
-async fn login(
-    state: tauri::State<'_, AppState>,
-    email: String,
-    password: String,
-    remember: Option<bool>,
-) -> Result<auth::AuthState, String> {
-    let mut result = auth::login(&email, &password).await.map_err(|e| e.to_string())?;
-
-    // All users can login - plan limits are enforced per-file
-    // Fetch usage status to get plan limits
+async fn fill_usage(result: &mut auth::AuthState) {
     if let Some(ref token) = result.token {
         let client = api::PdfDkClient::new(Some(token.clone()));
         if let Ok(usage) = client.get_usage_status().await {
-            result.plan = Some(usage.plan);
+            result.apply_plan(&usage.plan);
             result.jobs_limit = Some(usage.limit);
             result.jobs_used = Some(usage.used);
             result.jobs_remaining = Some(usage.limit - usage.used);
-            result.max_file_size_mb = usage.max_file_size_mb.or(Some(100)); // From API, fallback to 100MB
+            result.max_file_size_mb = usage.max_file_size_mb.or(Some(100));
             result.is_unlimited = Some(usage.is_unlimited);
         }
     }
+}
 
-    let mut auth_state = state.auth.write().await;
-    *auth_state = result.clone();
-
-    // Save token securely
-    auth::save_token(&result.token.clone().unwrap_or_default())
-        .map_err(|e| e.to_string())?;
-
-    // Save credentials if "Remember me" is checked
-    info!("Remember me: {:?}", remember);
+#[tauri::command]
+async fn login(state: tauri::State<'_, AppState>, email: String, password: String, remember: Option<bool>) -> Result<auth::AuthState, String> {
+    let mut result = auth::login(&email, &password).await.map_err(|e| e.to_string())?;
+    fill_usage(&mut result).await;
+    {
+        let mut auth_state = state.auth.write().await;
+        *auth_state = result.clone();
+    }
+    auth::save_token(&result.token.clone().unwrap_or_default()).map_err(|e| e.to_string())?;
     if remember.unwrap_or(false) {
-        info!("Saving credentials for {}", email);
-        match auth::save_credentials(&email, &password) {
-            Ok(_) => info!("Credentials saved successfully"),
-            Err(e) => error!("Failed to save credentials: {}", e),
+        if let Err(e) = auth::save_credentials(&email, &password) {
+            error!("Failed to save credentials: {}", e);
         }
     } else {
-        // Clear any previously saved credentials
         let _ = auth::clear_credentials();
     }
-
     Ok(result)
 }
 
 #[tauri::command]
 async fn get_saved_credentials() -> Result<Option<serde_json::Value>, String> {
     match auth::load_credentials() {
-        Ok((email, password)) => Ok(Some(serde_json::json!({
-            "email": email,
-            "password": password
-        }))),
+        Ok((email, password)) => Ok(Some(serde_json::json!({ "email": email, "password": password }))),
         Err(_) => Ok(None),
     }
 }
@@ -145,250 +203,202 @@ async fn logout(state: tauri::State<'_, AppState>) -> Result<(), String> {
 
 #[tauri::command]
 async fn check_auth(state: tauri::State<'_, AppState>) -> Result<auth::AuthState, String> {
-    // Try to load saved token and validate it
     if let Ok(token) = auth::load_token() {
-        if let Ok(mut auth_result) = auth::validate_token(&token).await {
-            // Fetch usage status to get plan limits
-            let client = api::PdfDkClient::new(Some(token.clone()));
-            if let Ok(usage) = client.get_usage_status().await {
-                auth_result.plan = Some(usage.plan);
-                auth_result.jobs_limit = Some(usage.limit);
-                auth_result.jobs_used = Some(usage.used);
-                auth_result.jobs_remaining = Some(usage.limit - usage.used);
-                auth_result.max_file_size_mb = usage.max_file_size_mb.or(Some(100)); // From API, fallback to 100MB
-                auth_result.is_unlimited = Some(usage.is_unlimited);
+        match auth::validate_token(&token).await {
+            Ok(mut result) => {
+                fill_usage(&mut result).await;
+                let mut auth_state = state.auth.write().await;
+                *auth_state = result.clone();
+                return Ok(result);
             }
-
-            let mut auth_state = state.auth.write().await;
-            *auth_state = auth_result.clone();
-            return Ok(auth_result);
+            Err(e) => add_log(&format!("Saved session not valid: {}", e)),
         }
     }
     Ok(auth::AuthState::default())
 }
 
+/// The tools catalogue: live from the API, else the cached copy, else the
+/// two built-in tools. Never empty.
 #[tauri::command]
-async fn get_available_tools() -> Result<Vec<config::ToolDefinition>, String> {
-    Ok(config::get_available_tools())
+async fn get_available_tools(state: tauri::State<'_, AppState>, refresh: Option<bool>) -> Result<Vec<ToolDefinition>, String> {
+    if !refresh.unwrap_or(false) {
+        let current = state.catalog.read().await;
+        if !current.is_empty() {
+            return Ok(current.clone());
+        }
+    }
+    let token = state.auth.read().await.token.clone();
+    let client = api::PdfDkClient::new(token);
+    let tools = match client.fetch_catalog().await {
+        Ok(cache) => {
+            add_log(&format!("Tools catalogue {} loaded: {} tools", cache.version.clone().unwrap_or_default(), cache.tools.len()));
+            if let Err(e) = config::save_cached_catalog(&cache) {
+                add_log(&format!("Could not cache catalogue: {}", e));
+            }
+            cache.tools
+        }
+        Err(e) => {
+            add_log(&format!("Catalogue fetch failed ({}), using cached copy", e));
+            match config::load_cached_catalog() {
+                Some(c) if !c.tools.is_empty() => c.tools,
+                _ => config::builtin_catalog(),
+            }
+        }
+    };
+    let mut cat = state.catalog.write().await;
+    *cat = tools.clone();
+    Ok(tools)
+}
+
+async fn find_tool(state: &AppState, tool_id: &str) -> Option<ToolDefinition> {
+    let cat = state.catalog.read().await;
+    cat.iter().find(|t| t.id == tool_id).cloned()
 }
 
 #[tauri::command]
-async fn enable_tool(
-    state: tauri::State<'_, AppState>,
-    tool_id: String,
-    folder_path: String,
-) -> Result<(), String> {
-    // Update config
+async fn enable_tool(app: AppHandle, state: tauri::State<'_, AppState>, tool_id: String, folder_path: String) -> Result<(), String> {
+    let def = find_tool(&state, &tool_id).await.ok_or_else(|| format!("Unknown tool: {}", tool_id))?;
     let tool_config = {
         let mut config = state.config.write().await;
-        config.enable_tool(&tool_id, &folder_path).map_err(|e| e.to_string())?;
+        config.enable_tool(&def, &folder_path).map_err(|e| e.to_string())?;
         config::save_config(&config).map_err(|e| e.to_string())?;
         config.tools.iter().find(|t| t.id == tool_id).cloned()
     };
-
-    // Start/update watcher for this tool
     if let Some(tc) = tool_config {
-        let mut watcher_guard = state.watcher.write().await;
-
-        // Create watcher if it doesn't exist
-        if watcher_guard.is_none() {
-            match watcher::FolderWatcher::new() {
-                Ok((watcher, mut rx)) => {
-                    // Spawn event processor - notifications handled in start_watchers
-                    let auth_state = state.auth.clone();
-                    tokio::spawn(async move {
-                        while let Ok(event) = rx.recv().await {
-                            let file_name = event.path.file_name()
-                                .and_then(|n| n.to_str())
-                                .unwrap_or("file")
-                                .to_string();
-                            info!("Processing file: {}", file_name);
-                            let token = {
-                                let auth = auth_state.read().await;
-                                auth.token.clone()
-                            };
-
-                            match watcher::process_file_event(event.clone(), token).await {
-                                Ok(output_path) => {
-                                    add_log(&format!("SUCCESS: {} processed to {:?}", file_name, output_path));
-                                }
-                                Err(e) => {
-                                    add_log(&format!("ERROR: {} failed: {}", file_name, e));
-                                }
-                            }
-                        }
-                    });
-                    *watcher_guard = Some(watcher);
-                }
-                Err(e) => {
-                    error!("Failed to create watcher: {}", e);
-                    return Err(format!("Failed to create file watcher: {}", e));
-                }
-            }
-        }
-
-        // Add folder to watcher
-        if let Some(watcher) = watcher_guard.as_mut() {
-            watcher.add_folder(tc).await.map_err(|e| e.to_string())?;
+        ensure_watcher(&app, &state).await?;
+        let mut guard = state.watcher.write().await;
+        if let Some(w) = guard.as_mut() {
+            w.add_folder(tc).await.map_err(|e| e.to_string())?;
         }
     }
-
     Ok(())
 }
 
 #[tauri::command]
 async fn disable_tool(state: tauri::State<'_, AppState>, tool_id: String) -> Result<(), String> {
-    // Get the folder path before disabling
     let folder_path = {
         let config = state.config.read().await;
-        config.tools.iter()
-            .find(|t| t.id == tool_id)
-            .and_then(|t| t.folder_path.clone())
-            .map(std::path::PathBuf::from)
+        config.tools.iter().find(|t| t.id == tool_id).and_then(|t| t.folder_path.clone()).map(PathBuf::from)
     };
-
-    // Update config
     {
         let mut config = state.config.write().await;
         config.disable_tool(&tool_id);
         config::save_config(&config).map_err(|e| e.to_string())?;
     }
-
-    // Remove folder from watcher
     if let Some(path) = folder_path {
-        let mut watcher_guard = state.watcher.write().await;
-        if let Some(watcher) = watcher_guard.as_mut() {
-            let _ = watcher.remove_folder(&path).await;
+        let mut guard = state.watcher.write().await;
+        if let Some(w) = guard.as_mut() {
+            let _ = w.remove_folder(&path).await;
         }
     }
-
     Ok(())
 }
 
 #[tauri::command]
-async fn get_jobs(_state: tauri::State<'_, AppState>) -> Result<Vec<processor::Job>, String> {
-    // Return recent jobs from processor
-    Ok(vec![]) // TODO: implement job tracking
+async fn update_tool_options(state: tauri::State<'_, AppState>, tool_id: String, options: serde_json::Value) -> Result<(), String> {
+    let mut config = state.config.write().await;
+    if let Some(tc) = config.tools.iter_mut().find(|t| t.id == tool_id) {
+        tc.options = options;
+    } else {
+        // options for a tool that is not a watched folder yet (quick actions)
+        let def = { let cat = state.catalog.read().await; cat.iter().find(|t| t.id == tool_id).cloned() };
+        let Some(def) = def else { return Err(format!("Unknown tool: {}", tool_id)) };
+        config.tools.push(ToolConfig {
+            id: def.id.clone(), enabled: false, folder_path: None, output_mode: config::OutputMode::Subfolder,
+            options, endpoint: Some(def.endpoint.clone()), file_field: Some(def.file_field.clone()),
+            accepts: def.accepts.clone(), output: Some(def.output.clone()), name: Some(def.name.clone()),
+        });
+    }
+    config::save_config(&config).map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 #[tauri::command]
 async fn start_watchers(app: AppHandle, state: tauri::State<'_, AppState>) -> Result<(), String> {
-    info!("Starting watchers for enabled tools...");
-
-    // Get enabled tools from config
-    let enabled_tools: Vec<config::ToolConfig> = {
+    let enabled: Vec<ToolConfig> = {
         let config = state.config.read().await;
-        config.tools.iter()
-            .filter(|t| t.enabled && t.folder_path.is_some())
-            .cloned()
-            .collect()
+        config.tools.iter().filter(|t| t.enabled && t.folder_path.is_some()).cloned().collect()
     };
-
-    if enabled_tools.is_empty() {
-        add_log("No enabled tools to watch");
+    if enabled.is_empty() {
         return Ok(());
     }
+    ensure_watcher(&app, &state).await?;
+    let mut guard = state.watcher.write().await;
+    if let Some(w) = guard.as_mut() {
+        for tool in enabled {
+            if let Err(e) = w.add_folder(tool.clone()).await {
+                add_log(&format!("Could not watch folder for {}: {}", tool.id, e));
+            }
+        }
+    }
+    Ok(())
+}
 
-    add_log(&format!("Found {} enabled tools to watch", enabled_tools.len()));
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct FileResult {
+    input: String,
+    output: Option<String>,
+    error: Option<String>,
+}
 
-    let mut watcher_guard = state.watcher.write().await;
-
-    // Create watcher if it doesn't exist
-    if watcher_guard.is_none() {
-        add_log("Creating new file watcher...");
-        match watcher::FolderWatcher::new() {
-            Ok((watcher, mut rx)) => {
-                add_log("File watcher created successfully");
-                // Spawn event processor
-                let auth_state = state.auth.clone();
-                let app_handle = app.clone();
-                tokio::spawn(async move {
-                    add_log("Event receiver task started - waiting for files...");
-                    while let Ok(event) = rx.recv().await {
-                        let file_name = event.path.file_name()
-                            .and_then(|n| n.to_str())
-                            .unwrap_or("file")
-                            .to_string();
-                        add_log(&format!("Received file event: {} for tool: {}", file_name, event.tool_id));
-                        let token = {
-                            let auth = auth_state.read().await;
-                            auth.token.clone()
-                        };
-
-                        add_log(&format!("Processing file with tool: {}", event.tool_id));
-                        match watcher::process_file_event(event.clone(), token).await {
-                            Ok(output_path) => {
-                                add_log(&format!("SUCCESS: File processed to {:?}", output_path));
-                                // Send success notification
-                                let _ = app_handle.notification()
-                                    .builder()
-                                    .title("PDF.dk - File Processed")
-                                    .body(&format!("{} completed successfully", file_name))
-                                    .show();
-                            }
-                            Err(e) => {
-                                let error_msg = format!("{}", e);
-                                add_log(&format!("ERROR: Failed to process file: {}", error_msg));
-                                // Send error notification
-                                let _ = app_handle.notification()
-                                    .builder()
-                                    .title("PDF.dk - Processing Failed")
-                                    .body(&format!("{}: {}", file_name, error_msg))
-                                    .show();
-                            }
-                        }
-                    }
-                    add_log("Event receiver task ended");
-                });
-                *watcher_guard = Some(watcher);
+/// Run files the user dropped on the window / opened with the app through
+/// one tool. Output lands next to the source; the original stays put.
+#[tauri::command]
+async fn process_files(app: AppHandle, state: tauri::State<'_, AppState>, tool_id: String, paths: Vec<String>) -> Result<Vec<FileResult>, String> {
+    let def = find_tool(&state, &tool_id).await.ok_or_else(|| format!("Unknown tool: {}", tool_id))?;
+    let (tc, lang) = {
+        let config = state.config.read().await;
+        let saved = config.tools.iter().find(|t| t.id == tool_id).cloned();
+        let mut options = def.default_options();
+        if let Some(s) = saved {
+            if let (Some(base), Some(over)) = (options.as_object_mut(), s.options.as_object()) {
+                for (k, v) in over { base.insert(k.clone(), v.clone()); }
+            }
+        }
+        (ToolConfig {
+            id: def.id.clone(), enabled: true, folder_path: None, output_mode: config::OutputMode::SameFolder,
+            options, endpoint: Some(def.endpoint.clone()), file_field: Some(def.file_field.clone()),
+            accepts: def.accepts.clone(), output: Some(def.output.clone()), name: Some(def.name.clone()),
+        }, config.general.language.clone())
+    };
+    let label = tool_label(&tc, &lang);
+    let token = state.auth.read().await.token.clone();
+    let mut results = Vec::new();
+    for p in paths {
+        let path = PathBuf::from(&p);
+        let job_id = job_add(processor::Job::new(&tc.id, &label, &p));
+        job_update(&job_id, |j| j.set_processing());
+        let parent = path.parent().map(Path::to_path_buf).unwrap_or_else(|| PathBuf::from("."));
+        match watcher::run_tool(&path, &tc, token.clone(), Some(&parent)).await {
+            Ok(out) => {
+                job_update(&job_id, |j| j.set_completed(&out.to_string_lossy()));
+                results.push(FileResult { input: p, output: Some(out.to_string_lossy().to_string()), error: None });
             }
             Err(e) => {
-                add_log(&format!("ERROR: Failed to create watcher: {}", e));
-                return Err(format!("Failed to create file watcher: {}", e));
+                job_update(&job_id, |j| j.set_failed(&e.to_string()));
+                results.push(FileResult { input: p, output: None, error: Some(e.to_string()) });
             }
         }
     }
-
-    // Add all enabled tool folders to watcher
-    if let Some(watcher) = watcher_guard.as_mut() {
-        for tool in enabled_tools {
-            add_log(&format!("Adding watch folder for tool: {} at {:?}", tool.id, tool.folder_path));
-            if let Err(e) = watcher.add_folder(tool.clone()).await {
-                add_log(&format!("ERROR: Failed to add folder for tool {}: {}", tool.id, e));
-            }
-        }
-    }
-
-    add_log("Watcher setup complete");
-    Ok(())
+    let ok = results.iter().filter(|r| r.output.is_some()).count();
+    notify(&app, &state.config, &format!("{} · PDF.dk", label), &if lang == "en" { format!("{} of {} files done", ok, results.len()) } else { format!("{} af {} filer færdige", ok, results.len()) });
+    Ok(results)
 }
 
 #[tauri::command]
-async fn select_folder() -> Result<Option<String>, String> {
-    // This will be handled by tauri-plugin-dialog on frontend
-    Ok(None)
+fn take_pending_files(state: tauri::State<'_, AppState>) -> Vec<String> {
+    state.pending_files.lock().map(|mut v| std::mem::take(&mut *v)).unwrap_or_default()
 }
 
 #[tauri::command]
-async fn update_tool_options(
-    state: tauri::State<'_, AppState>,
-    tool_id: String,
-    options: serde_json::Value,
-) -> Result<(), String> {
-    let mut config = state.config.write().await;
+fn get_jobs() -> Vec<processor::Job> {
+    JOBS.lock().map(|j| j.clone()).unwrap_or_default()
+}
 
-    // Find the tool index first
-    let tool_idx = config.tools.iter().position(|t| t.id == tool_id);
-
-    if let Some(idx) = tool_idx {
-        config.tools[idx].options = options.clone();
-        config::save_config(&config).map_err(|e| e.to_string())?;
-        info!("Updated options for tool {}: {:?}", tool_id, options);
-    } else {
-        return Err(format!("Tool not found: {}", tool_id));
-    }
-
-    Ok(())
+#[tauri::command]
+fn get_site_base() -> String {
+    api::site_base()
 }
 
 #[tauri::command]
@@ -403,64 +413,67 @@ fn clear_logs() {
     }
 }
 
+// ------------------------------------------------------------------ tray
+
 fn setup_tray<R: Runtime>(app: &tauri::App<R>) -> Result<(), Box<dyn std::error::Error>> {
-    // Get the existing tray icon created by Tauri from tauri.conf.json
-    let tray = app.tray_by_id("main").ok_or("Tray not found")?;
+    let show = tauri::menu::MenuItem::with_id(app, "show", "Vis PDF.dk Desktop", true, None::<&str>)?;
+    let site = tauri::menu::MenuItem::with_id(app, "site", "Åbn pdf.dk", true, None::<&str>)?;
+    let quit = tauri::menu::MenuItem::with_id(app, "quit", "Afslut", true, None::<&str>)?;
+    let menu = tauri::menu::Menu::with_items(app, &[&show, &site, &quit])?;
 
-    // Create menu
-    let show = tauri::menu::MenuItem::with_id(app, "show", "Show PDF.dk Desktop", true, None::<&str>)?;
-    let pause = tauri::menu::MenuItem::with_id(app, "pause", "Pause Processing", true, None::<&str>)?;
-    let quit = tauri::menu::MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-    let menu = tauri::menu::Menu::with_items(app, &[&show, &pause, &quit])?;
-
-    // Set menu on existing tray
+    let tray = match app.tray_by_id("main") {
+        Some(t) => t,
+        None => TrayIconBuilder::with_id("main").icon(app.default_window_icon().cloned().ok_or("no icon")?).build(app)?,
+    };
     tray.set_menu(Some(menu))?;
     tray.set_show_menu_on_left_click(false)?;
 
-    // Set up menu event handler
     tray.on_menu_event(|app, event| match event.id.as_ref() {
-        "show" => {
-            if let Some(window) = app.get_webview_window("main") {
-                let _ = window.show();
-                let _ = window.set_focus();
-            }
+        "show" => show_main(app),
+        "site" => {
+            let _ = tauri_plugin_opener::open_url(api::site_base(), None::<&str>);
         }
-        "pause" => {
-            info!("Pause processing requested");
-            // TODO: Toggle pause state
-        }
-        "quit" => {
-            info!("Quit requested");
-            app.exit(0);
-        }
+        "quit" => app.exit(0),
         _ => {}
     });
-
-    // Set up click event handler
     tray.on_tray_icon_event(|tray, event| {
-        if let TrayIconEvent::Click {
-            button: MouseButton::Left,
-            button_state: MouseButtonState::Up,
-            ..
-        } = event
-        {
-            let app = tray.app_handle();
-            if let Some(window) = app.get_webview_window("main") {
-                let _ = window.show();
-                let _ = window.set_focus();
-            }
+        if let TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. } = event {
+            show_main(tray.app_handle());
         }
     });
-
     Ok(())
+}
+
+fn show_main<R: Runtime>(app: &AppHandle<R>) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.show();
+        let _ = window.unminimize();
+        let _ = window.set_focus();
+    }
+}
+
+/// Files handed to us by the OS (dock drop, "Open with", command line).
+fn deliver_files<R: Runtime>(app: &AppHandle<R>, paths: Vec<String>) {
+    let paths: Vec<String> = paths.into_iter().filter(|p| Path::new(p).is_file()).collect();
+    if paths.is_empty() {
+        return;
+    }
+    if let Some(state) = app.try_state::<AppState>() {
+        if let Ok(mut pending) = state.pending_files.lock() {
+            pending.extend(paths.clone());
+        }
+    }
+    show_main(app);
+    let _ = app.emit("files-opened", paths);
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    // Initialize logging
     tracing_subscriber::fmt::init();
 
-    tauri::Builder::default()
+    let cli_files: Vec<String> = std::env::args().skip(1).filter(|a| !a.starts_with('-') && Path::new(a).is_file()).collect();
+
+    let app = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -468,41 +481,38 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_shell::init())
-        .setup(|app| {
-            // Load config
+        .plugin(tauri_plugin_autostart::init(tauri_plugin_autostart::MacosLauncher::LaunchAgent, Some(vec!["--minimized"])))
+        .setup(move |app| {
             let config = config::load_config().unwrap_or_default();
+            let start_minimized = config.general.start_minimized && std::env::args().any(|a| a == "--minimized");
+            let cached = config::load_cached_catalog().map(|c| c.tools).unwrap_or_default();
 
-            // Initialize app state
-            let state = AppState {
+            app.manage(AppState {
                 config: Arc::new(RwLock::new(config)),
                 auth: Arc::new(RwLock::new(auth::AuthState::default())),
                 watcher: Arc::new(RwLock::new(None)),
-            };
+                catalog: Arc::new(RwLock::new(cached)),
+                pending_files: Mutex::new(cli_files.clone()),
+            });
 
-            app.manage(state);
-
-            // Setup system tray
             if let Err(e) = setup_tray(app) {
                 error!("Failed to setup tray: {}", e);
             }
 
-            // Handle window close - hide to tray instead of quitting
             if let Some(window) = app.get_webview_window("main") {
+                if start_minimized && cli_files.is_empty() {
+                    let _ = window.hide();
+                }
                 let window_clone = window.clone();
                 window.on_window_event(move |event| {
                     if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                        // Prevent the window from closing
                         api.prevent_close();
-                        // Hide the window instead - it stays in the system tray
                         let _ = window_clone.hide();
-                        info!("Window hidden to tray");
                     }
                 });
             }
 
-            // Start watching folders (will be done after auth check in frontend)
             info!("PDF.dk Desktop started");
-
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -515,14 +525,29 @@ pub fn run() {
             get_available_tools,
             enable_tool,
             disable_tool,
-            get_jobs,
-            select_folder,
-            start_watchers,
-            get_saved_credentials,
             update_tool_options,
+            start_watchers,
+            process_files,
+            take_pending_files,
+            get_jobs,
+            get_site_base,
+            get_saved_credentials,
             get_logs,
             clear_logs,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application");
+
+    app.run(|app_handle, event| {
+        #[cfg(target_os = "macos")]
+        if let RunEvent::Opened { urls } = &event {
+            let paths: Vec<String> = urls.iter().filter_map(|u| u.to_file_path().ok()).map(|p| p.to_string_lossy().to_string()).collect();
+            deliver_files(app_handle, paths);
+        }
+        #[cfg(target_os = "macos")]
+        if let RunEvent::Reopen { .. } = &event {
+            show_main(app_handle);
+        }
+        let _ = (&event, app_handle);
+    });
 }

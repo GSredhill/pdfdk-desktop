@@ -1,0 +1,76 @@
+// Browser preview of the UI without Tauri: a fake `window.__TAURI_INTERNALS__`
+// that answers the commands App.vue and the plugins call. Only loaded by
+// main.ts in `vite dev` when the real bridge is absent. Nothing here ships.
+import fixture from "./tools.fixture.json";
+
+type Handler = (args: any) => any;
+
+const config = {
+  version: 2,
+  general: { startOnLogin: true, startMinimized: true, showNotifications: true, language: "da", theme: "system" },
+  tools: [
+    { id: "compress", enabled: true, folderPath: "/Users/demo/PDF.dk/Komprimer", outputMode: "subfolder", options: { quality: "high" }, accepts: ["pdf"], output: "pdf", name: { da: "Komprimer PDF", en: "Compress PDF" } },
+    { id: "outline", enabled: true, folderPath: "/Users/demo/PDF.dk/Kurver", outputMode: "subfolder", options: {}, accepts: ["pdf"], output: "pdf", name: { da: "Tekst til kurver", en: "Fonts to outlines" } },
+  ] as any[],
+};
+
+const signedIn = new URLSearchParams(location.search).get("login") !== "0";
+const auth = () => ({
+  isAuthenticated: signedIn, isPro: true, token: signedIn ? "mock" : null, plan: signedIn ? "pro" : null,
+  user: signedIn ? { id: 1, email: "demo@pdf.dk", name: "Demo Bruger", isSuperadmin: false, role: "user" } : null,
+  jobsLimit: 20, jobsUsed: 7, jobsRemaining: 13, maxFileSizeMb: 500, isUnlimited: signedIn,
+});
+
+const jobs = [
+  { id: "1", toolId: "compress", toolName: "Komprimer PDF", inputFile: "/Users/demo/PDF.dk/Komprimer/katalog-2026.pdf", outputFile: "/Users/demo/PDF.dk/Komprimer/Processed/katalog-2026_compress.pdf", status: "completed", error: null, createdAt: Date.now() / 1000 - 120, completedAt: Date.now() / 1000 - 100 },
+  { id: "2", toolId: "outline", toolName: "Tekst til kurver", inputFile: "/Users/demo/PDF.dk/Kurver/flyer.pdf", outputFile: null, status: "processing", error: null, createdAt: Date.now() / 1000 - 20, completedAt: null },
+  { id: "3", toolId: "unlock", toolName: "Lås PDF op", inputFile: "/Users/demo/Downloads/04-05-2026.pdf", outputFile: null, status: "failed", error: "PDF kræver adgangskode. Prøv igen med den korrekte adgangskode.", createdAt: Date.now() / 1000 - 600, completedAt: Date.now() / 1000 - 590 },
+];
+
+const handlers: Record<string, Handler> = {
+  "plugin:app|version": () => "0.3.0-preview",
+  "plugin:event|listen": () => 1,
+  "plugin:event|unlisten": () => null,
+  "plugin:updater|check": () => null,
+  "plugin:opener|open_url": ({ url }) => { window.open(url, "_blank"); return null; },
+  "plugin:opener|reveal_item_in_dir": () => null,
+  "plugin:dialog|open": () => "/Users/demo/PDF.dk/Ny mappe",
+  get_config: () => config,
+  save_config: ({ newConfig }) => { Object.assign(config, newConfig); return null; },
+  get_site_base: () => "https://dev.pdf.dk",
+  check_auth: auth,
+  get_auth_state: auth,
+  login: ({ email }) => { if (!email.includes("@")) throw "Invalid credentials"; return { ...auth(), isAuthenticated: true }; },
+  logout: () => null,
+  get_saved_credentials: () => null,
+  get_available_tools: () => fixture.data.tools,
+  start_watchers: () => null,
+  // ?drop=1 simulates files handed over by the OS (dock drop / open-with) on start
+  take_pending_files: () => (new URLSearchParams(location.search).get("drop") ? ["/Users/demo/Downloads/Årsrapport 2025.pdf", "/Users/demo/Downloads/bilag-7.pdf"] : []),
+  enable_tool: ({ toolId, folderPath }) => {
+    const def = fixture.data.tools.find((t: any) => t.id === toolId);
+    const existing = config.tools.find((t) => t.id === toolId);
+    if (existing) Object.assign(existing, { enabled: true, folderPath });
+    else config.tools.push({ id: toolId, enabled: true, folderPath, outputMode: "subfolder", options: {}, accepts: def?.accepts, output: def?.output, name: def?.name });
+    return null;
+  },
+  disable_tool: ({ toolId }) => { const t = config.tools.find((x) => x.id === toolId); if (t) t.enabled = false; return null; },
+  update_tool_options: ({ toolId, options }) => { const t = config.tools.find((x) => x.id === toolId); if (t) t.options = options; return null; },
+  process_files: async ({ paths }) => { await new Promise((r) => setTimeout(r, 1200)); return paths.map((p: string) => ({ input: p, output: p.replace(/(\.[^.]+)$/, "_tool$1"), error: null })); },
+  get_jobs: () => jobs,
+  get_logs: () => ["[12:00:01] Tools catalogue 2026-09-20 loaded: 38 tools", "[12:00:02] Watching /Users/demo/PDF.dk/Komprimer for compress"],
+  clear_logs: () => null,
+};
+
+(window as any).__TAURI_INTERNALS__ = {
+  invoke: async (cmd: string, args: any = {}) => {
+    const h = handlers[cmd];
+    if (!h) { console.warn("mock: unhandled command", cmd, args); return null; }
+    return h(args);
+  },
+  transformCallback: (cb: any) => { const id = Math.floor(Math.random() * 1e9); (window as any)[`_${id}`] = cb; return id; },
+  unregisterCallback: () => {},
+  metadata: { currentWindow: { label: "main" }, currentWebview: { label: "main", windowLabel: "main" } },
+  plugins: { path: { sep: "/", delimiter: ":" } },
+};
+console.info("PDF.dk Desktop: browser preview mode (Tauri mocked)");

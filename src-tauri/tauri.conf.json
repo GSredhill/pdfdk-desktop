@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "PDF.dk Desktop",
-  "version": "0.2.11",
+  "version": "0.3.0",
   "identifier": "dk.pdf.desktop",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -13,12 +13,13 @@
     "windows": [
       {
         "title": "PDF.dk Desktop",
-        "width": 900,
-        "height": 650,
-        "minWidth": 600,
-        "minHeight": 450,
+        "width": 1040,
+        "height": 720,
+        "minWidth": 760,
+        "minHeight": 540,
         "center": true,
-        "visible": true
+        "visible": true,
+        "dragDropEnabled": true
       }
     ],
     "trayIcon": {
@@ -26,7 +27,7 @@
       "iconAsTemplate": true
     },
     "security": {
-      "csp": "default-src 'self'; connect-src 'self' https://pdf.dk https://*.pdf.dk https://api.github.com https://github.com; img-src 'self' data: https:; frame-src https://pdf.dk https://*.pdf.dk; style-src 'self' 'unsafe-inline'"
+      "csp": "default-src 'self'; connect-src 'self' https://pdf.dk https://*.pdf.dk https://api.github.com https://github.com https://objects.githubusercontent.com; img-src 'self' data: https:; style-src 'self' 'unsafe-inline'; font-src 'self'"
     }
   },
   "bundle": {
@@ -38,6 +39,15 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
+    ],
+    "fileAssociations": [
+      { "ext": ["pdf"], "mimeType": "application/pdf", "description": "PDF document", "role": "Viewer" },
+      { "ext": ["png", "jpg", "jpeg", "webp", "gif", "bmp", "tif", "tiff"], "description": "Image", "role": "Viewer" },
+      { "ext": ["heic", "heif"], "description": "HEIC image", "role": "Viewer" },
+      { "ext": ["svg", "eps", "ai"], "description": "Vector artwork", "role": "Viewer" },
+      { "ext": ["stl", "step", "stp"], "description": "3D model", "role": "Viewer" },
+      { "ext": ["eml", "msg"], "description": "Email", "role": "Viewer" },
+      { "ext": ["ppt", "pptx"], "description": "Presentation", "role": "Viewer" }
     ],
     "macOS": {
       "minimumSystemVersion": "10.15",
