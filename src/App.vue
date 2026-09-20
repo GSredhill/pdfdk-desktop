@@ -66,7 +66,8 @@ async function loadTools(refresh = false) {
 }
 async function afterSignIn() {
   await loadConfig();
-  await loadTools();
+  // always refetch the catalogue on start; the Rust side falls back to the cached copy when offline
+  await loadTools(true);
   await invoke("start_watchers").catch((e) => console.error(e));
   const pending = await invoke<string[]>("take_pending_files");
   if (pending.length) droppedFiles.value = pending;
