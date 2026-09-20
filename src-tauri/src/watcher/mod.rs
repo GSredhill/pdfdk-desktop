@@ -177,7 +177,7 @@ impl FolderWatcher {
 
     fn is_own_output(path: &Path, config: &ToolConfig) -> bool {
         let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
-        stem.ends_with(&format!("_{}", config.id))
+        stem.ends_with(&format!("_{}", config.id)) || produced_outputs().lock().map(|set| set.contains(path)).unwrap_or(false)
     }
 
     fn is_in_processed_folder(path: &Path) -> bool {
@@ -225,6 +225,14 @@ pub async fn process_file_event(event: FileEvent, auth_token: Option<String>) ->
 /// The shared job runner: watched folders and "open with"/dropped files
 /// both end here. `output_dir` overrides the tool's output mode (used for
 /// dropped files, which land next to their source).
+/// Paths this process has written as results. A watcher on the same folder
+/// sees them appear and must not feed them back in (names no longer carry the
+/// tool id since the server decides the suffix, e.g. "Katalog_FOGRA39.pdf").
+fn produced_outputs() -> &'static std::sync::Mutex<std::collections::HashSet<PathBuf>> {
+    static SET: std::sync::OnceLock<std::sync::Mutex<std::collections::HashSet<PathBuf>>> = std::sync::OnceLock::new();
+    SET.get_or_init(|| std::sync::Mutex::new(std::collections::HashSet::new()))
+}
+
 pub async fn run_tool(
     input: &Path,
     tool: &ToolConfig,
@@ -238,16 +246,25 @@ pub async fn run_tool(
     let job_uuid = client.process_file(input, &endpoint_id, &file_field, &tool.options).await?;
     let job = client.poll_job(&job_uuid).await?;
 
-    // the server knows the real output type (zip, docx, svg …); the catalogue's
-    // `output` is the fallback
-    let ext = job
-        .output_filename
-        .as_deref()
-        .and_then(|n| Path::new(n).extension().and_then(|e| e.to_str()).map(|s| s.to_string()))
+    // the server knows the real output type (zip, docx, svg …) and the suffix
+    // it would give a web download ("komprimeret", or the detected colour
+    // profile in check mode); the catalogue's `output` and the tool id are the
+    // fallbacks. The original stem is kept as-is (the server's copy is ASCII-folded).
+    let server_name = job.output_filename.as_deref().map(Path::new);
+    let ext = server_name
+        .and_then(|n| n.extension().and_then(|e| e.to_str()).map(|s| s.to_string()))
         .or_else(|| tool.output.clone())
         .unwrap_or_else(|| "pdf".to_string());
+    let suffix = server_name
+        .and_then(|n| n.file_stem().and_then(|s| s.to_str()))
+        .and_then(|stem| stem.rsplit_once('_').map(|(_, sfx)| sfx.to_string()))
+        .filter(|s| !s.is_empty() && s.len() <= 40)
+        .unwrap_or_else(|| tool.id.clone());
 
-    let output_path = get_output_path(input, tool, &ext, output_dir);
+    let output_path = get_output_path(input, tool, &suffix, &ext, output_dir);
+    if let Ok(mut set) = produced_outputs().lock() {
+        set.insert(output_path.clone());
+    }
     client.download_result(&job_uuid, &output_path).await?;
     Ok(output_path)
 }
@@ -270,9 +287,9 @@ async fn move_to_originals(file_path: &Path) -> Result<(), std::io::Error> {
     Ok(())
 }
 
-fn get_output_path(input_path: &Path, config: &ToolConfig, ext: &str, output_dir: Option<&Path>) -> PathBuf {
+fn get_output_path(input_path: &Path, config: &ToolConfig, suffix: &str, ext: &str, output_dir: Option<&Path>) -> PathBuf {
     let stem = input_path.file_stem().and_then(|s| s.to_str()).unwrap_or("output");
-    let output_filename = format!("{}_{}.{}", stem, config.id, ext);
+    let output_filename = format!("{}_{}.{}", stem, suffix, ext);
     if let Some(dir) = output_dir {
         return dir.join(&output_filename);
     }
