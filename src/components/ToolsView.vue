@@ -12,8 +12,9 @@ const emit = defineEmits<{ (e: "reload"): void; (e: "config-changed"): void }>()
 
 const query = ref("");
 const onlyEnabled = ref(false);
-const optionsFor = ref<ToolDefinition | null>(null);
+const optionsFor = ref<{ tool: ToolDefinition; entry: ToolConfig | null } | null>(null);
 const busyTool = ref("");
+const error = ref("");
 
 const enabledCount = computed(() => props.config?.tools.filter((x) => x.enabled).length ?? 0);
 
@@ -34,14 +35,16 @@ const groups = computed(() => {
   }));
 });
 
-function cfg(id: string): ToolConfig | undefined {
-  return props.config?.tools.find((x) => x.id === id);
+/** every watched folder of a tool (a tool can have several, each with its own options) */
+function entries(id: string): ToolConfig[] {
+  return props.config?.tools.filter((x) => x.id === id && x.enabled) ?? [];
 }
 function isEnabled(id: string): boolean {
-  return cfg(id)?.enabled ?? false;
+  return entries(id).length > 0;
 }
-function folder(id: string): string {
-  return cfg(id)?.folderPath ?? "";
+/** the options drag-and-drop / Open with use: the tool's first entry */
+function defaultOptions(id: string): Record<string, unknown> {
+  return props.config?.tools.find((x) => x.id === id)?.options || {};
 }
 function shortFolder(p: string): string {
   const home = /^\/Users\/[^/]+|^C:\\Users\\[^\\]+/.exec(p)?.[0];
@@ -50,8 +53,7 @@ function shortFolder(p: string): string {
 function visibleOptions(tool: ToolDefinition) {
   return tool.options.filter((o) => o.type !== "hidden");
 }
-function optionSummary(tool: ToolDefinition): string {
-  const values = cfg(tool.id)?.options || {};
+function optionSummary(tool: ToolDefinition, values: Record<string, unknown>): string {
   return visibleOptions(tool)
     .filter((o) => o.type !== "text" || !o.secret)
     .map((o) => {
@@ -67,21 +69,25 @@ function optionSummary(tool: ToolDefinition): string {
     .join(" · ");
 }
 
-async function chooseFolder(tool: ToolDefinition) {
+/** pick a folder: for an existing entry (change) or a new one (enable / add another) */
+async function chooseFolder(tool: ToolDefinition, entry: ToolConfig | null = null) {
   const selected = await open({ directory: true, multiple: false, title: bi(tool.name) });
   if (!selected || typeof selected !== "string") return;
   busyTool.value = tool.id;
+  error.value = "";
   try {
-    await invoke("enable_tool", { toolId: tool.id, folderPath: selected });
+    await invoke("enable_tool", { toolId: tool.id, folderPath: selected, key: entry?.key ?? null });
     emit("config-changed");
+  } catch (e) {
+    error.value = String(e);
   } finally {
     busyTool.value = "";
   }
 }
-async function disable(tool: ToolDefinition) {
+async function disable(tool: ToolDefinition, entry: ToolConfig) {
   busyTool.value = tool.id;
   try {
-    await invoke("disable_tool", { toolId: tool.id });
+    await invoke("disable_tool", { key: entry.key });
     emit("config-changed");
   } finally {
     busyTool.value = "";
@@ -105,6 +111,8 @@ async function disable(tool: ToolDefinition) {
       </div>
     </div>
 
+    <div v-if="error" class="tv-err">{{ error }}</div>
+
     <div v-if="!tools.length && !loading" class="tv-empty card">
       <p>{{ t("noTools") }}</p>
       <button class="btn" @click="emit('reload')">{{ t("refreshTools") }}</button>
@@ -120,26 +128,35 @@ async function disable(tool: ToolDefinition) {
               <h4 class="tc-name">{{ bi(tool.name) }}</h4>
               <p class="tc-desc">{{ bi(tool.description) }}</p>
             </div>
-            <button v-if="visibleOptions(tool).length" class="tc-gear" :title="t('options')" @click="optionsFor = tool">
+            <button v-if="visibleOptions(tool).length && !isEnabled(tool.id)" class="tc-gear" :title="t('defaultOptions')" @click="optionsFor = { tool, entry: null }">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
             </button>
           </div>
 
           <div class="tc-meta">
             <span class="pill pill-muted">{{ t("accepts") }} {{ tool.accepts.map((e) => "." + e).join(" ") }}</span>
-            <span v-if="isEnabled(tool.id) && optionSummary(tool)" class="tc-opts">{{ optionSummary(tool) }}</span>
+            <span v-if="!isEnabled(tool.id) && optionSummary(tool, defaultOptions(tool.id))" class="tc-opts">{{ optionSummary(tool, defaultOptions(tool.id)) }}</span>
           </div>
 
-          <div v-if="isEnabled(tool.id)" class="tc-folder">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
-            <span class="mono tc-path" :title="folder(tool.id)">{{ shortFolder(folder(tool.id)) }}</span>
+          <div v-for="entry in entries(tool.id)" :key="entry.key" class="tc-folder">
+            <div class="tc-folder-row">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+              <span class="mono tc-path" :title="entry.folderPath || ''">{{ shortFolder(entry.folderPath || "") }}</span>
+              <button v-if="visibleOptions(tool).length" class="tc-ib" :title="t('folderOptions')" @click="optionsFor = { tool, entry }">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
+              </button>
+              <button class="tc-ib" :title="t('changeFolder')" @click="chooseFolder(tool, entry)">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17 1l4 4-4 4"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><path d="M7 23l-4-4 4-4"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>
+              </button>
+              <button class="tc-ib tc-ib-danger" :title="t('removeFolder')" @click="disable(tool, entry)">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+              </button>
+            </div>
+            <div v-if="optionSummary(tool, entry.options)" class="tc-folder-opts">{{ optionSummary(tool, entry.options) }}</div>
           </div>
 
           <div class="tc-actions">
-            <template v-if="isEnabled(tool.id)">
-              <button class="btn btn-sm" @click="chooseFolder(tool)">{{ t("changeFolder") }}</button>
-              <button class="btn btn-sm btn-ghost btn-danger" @click="disable(tool)">{{ t("disable") }}</button>
-            </template>
+            <button v-if="isEnabled(tool.id)" class="btn btn-sm btn-ghost" @click="chooseFolder(tool)">+ {{ t("addFolder") }}</button>
             <button v-else class="btn btn-sm btn-primary" @click="chooseFolder(tool)">{{ t("enable") }}</button>
             <a class="tc-web" href="#" :title="siteBase + bi(tool.web_path)" @click.prevent="openUrl(siteBase + bi(tool.web_path))">pdf.dk ↗</a>
           </div>
@@ -149,8 +166,9 @@ async function disable(tool: ToolDefinition) {
 
     <OptionsModal
       v-if="optionsFor"
-      :tool="optionsFor"
-      :values="cfg(optionsFor.id)?.options || {}"
+      :tool="optionsFor.tool"
+      :values="optionsFor.entry?.options || defaultOptions(optionsFor.tool.id)"
+      :entry-key="optionsFor.entry?.key ?? null"
       @close="optionsFor = null"
       @saved="optionsFor = null; emit('config-changed')"
     />
@@ -190,9 +208,16 @@ async function disable(tool: ToolDefinition) {
 .tc-gear:hover { background: var(--inset); color: var(--text); }
 .tc-meta { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 12px; color: var(--muted); }
 .tc-opts { color: var(--text2); }
-.tc-folder { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 9px; background: var(--inset); color: var(--muted); font-size: 12px; }
-.tc-folder svg { width: 15px; height: 15px; flex: none; color: var(--acc); }
-.tc-path { color: var(--text2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tc-folder { padding: 7px 8px 7px 10px; border-radius: 9px; background: var(--inset); color: var(--muted); font-size: 12px; }
+.tc-folder-row { display: flex; align-items: center; gap: 6px; }
+.tc-folder-row > svg { width: 15px; height: 15px; flex: none; color: var(--acc); margin-right: 2px; }
+.tc-path { color: var(--text2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
+.tc-folder-opts { margin: 4px 0 0 23px; color: var(--muted); font-size: 11.5px; }
+.tc-ib { width: 24px; height: 24px; flex: none; border: 0; border-radius: 6px; background: transparent; color: var(--faint); cursor: pointer; display: grid; place-items: center; }
+.tc-ib svg { width: 14px; height: 14px; }
+.tc-ib:hover { background: var(--card); color: var(--text); }
+.tc-ib-danger:hover { color: var(--bad); }
+.tv-err { margin-top: 10px; background: var(--badSoft); color: var(--bad); border-radius: 9px; padding: 9px 11px; font-size: 12.5px; }
 .tc-actions { display: flex; align-items: center; gap: 8px; margin-top: auto; }
 .tc-web { margin-left: auto; font-size: 11.5px; color: var(--faint); }
 .tc-web:hover { color: var(--brand); }

@@ -40,6 +40,7 @@ export interface ToolDefinition {
 
 export interface ToolConfig {
   id: string;
+  key: string; // one entry per watched folder; a tool can have several
   enabled: boolean;
   folderPath: string | null;
   outputMode: string;

@@ -20,6 +20,8 @@ pub enum ConfigError {
     NoConfigDir,
     #[error("Tool not found: {0}")]
     ToolNotFound(String),
+    #[error("{0}")]
+    Invalid(String),
 }
 
 /// Saved authentication credentials
@@ -67,6 +69,11 @@ fn default_theme() -> String {
 #[serde(rename_all = "camelCase")]
 pub struct ToolConfig {
     pub id: String,
+    /// One entry per watched folder. A tool can have several (e.g. Farveprofil
+    /// "check" in one folder, "convert" in another). Empty in configs written
+    /// before 0.3.0 → set to the tool id on load.
+    #[serde(default)]
+    pub key: String,
     pub enabled: bool,
     pub folder_path: Option<String>,
     pub output_mode: OutputMode,
@@ -253,7 +260,10 @@ impl Default for AppConfig {
 }
 
 impl AppConfig {
-    pub fn enable_tool(&mut self, tool: &ToolDefinition, folder_path: &str) -> Result<(), ConfigError> {
+    /// Enable a watched folder for `tool`. `key` = change the folder of that
+    /// existing entry; `None` = reuse the tool's disabled entry (options holder)
+    /// or add a new one. Returns the entry key.
+    pub fn enable_tool(&mut self, tool: &ToolDefinition, folder_path: &str, key: Option<&str>) -> Result<String, ConfigError> {
         let path = PathBuf::from(folder_path);
         if !path.exists() {
             fs::create_dir_all(&path)?;
@@ -262,41 +272,95 @@ impl AppConfig {
         if !processed_path.exists() {
             fs::create_dir_all(&processed_path)?;
         }
-
-        if let Some(tc) = self.tools.iter_mut().find(|t| t.id == tool.id) {
-            tc.enabled = true;
-            tc.folder_path = Some(folder_path.to_string());
-            tc.endpoint = Some(tool.endpoint.clone());
-            tc.file_field = Some(tool.file_field.clone());
-            tc.accepts = tool.accepts.clone();
-            tc.output = Some(tool.output.clone());
-            tc.name = Some(tool.name.clone());
-            // keep the user's options, but fill in anything the schema added since
-            if let (Some(existing), Some(defaults)) = (tc.options.as_object_mut(), tool.default_options().as_object()) {
-                for (k, v) in defaults {
-                    existing.entry(k.clone()).or_insert(v.clone());
-                }
-            }
-        } else {
-            self.tools.push(ToolConfig {
-                id: tool.id.clone(),
-                enabled: true,
-                folder_path: Some(folder_path.to_string()),
-                output_mode: OutputMode::Subfolder,
-                options: tool.default_options(),
-                endpoint: Some(tool.endpoint.clone()),
-                file_field: Some(tool.file_field.clone()),
-                accepts: tool.accepts.clone(),
-                output: Some(tool.output.clone()),
-                name: Some(tool.name.clone()),
-            });
+        if let Some(other) = self.tools.iter().find(|t| {
+            t.enabled && t.folder_path.as_deref() == Some(folder_path) && key.map_or(true, |k| t.key != k)
+        }) {
+            return Err(ConfigError::Invalid(format!("{} is already watched by {}", folder_path, other.id)));
         }
-        Ok(())
+
+        let idx = match key {
+            Some(k) => self.tools.iter().position(|t| t.key == k),
+            None => self.tools.iter().position(|t| t.id == tool.id && !t.enabled),
+        };
+        let idx = match idx {
+            Some(i) => i,
+            None => {
+                self.tools.push(ToolConfig {
+                    id: tool.id.clone(),
+                    key: self.new_key(&tool.id),
+                    enabled: true,
+                    folder_path: Some(folder_path.to_string()),
+                    output_mode: OutputMode::Subfolder,
+                    options: tool.default_options(),
+                    endpoint: Some(tool.endpoint.clone()),
+                    file_field: Some(tool.file_field.clone()),
+                    accepts: tool.accepts.clone(),
+                    output: Some(tool.output.clone()),
+                    name: Some(tool.name.clone()),
+                });
+                self.tools.len() - 1
+            }
+        };
+        let tc = &mut self.tools[idx];
+        tc.enabled = true;
+        tc.folder_path = Some(folder_path.to_string());
+        tc.endpoint = Some(tool.endpoint.clone());
+        tc.file_field = Some(tool.file_field.clone());
+        tc.accepts = tool.accepts.clone();
+        tc.output = Some(tool.output.clone());
+        tc.name = Some(tool.name.clone());
+        // keep the user's options, but fill in anything the schema added since
+        if let (Some(existing), Some(defaults)) = (tc.options.as_object_mut(), tool.default_options().as_object()) {
+            for (k, v) in defaults {
+                existing.entry(k.clone()).or_insert(v.clone());
+            }
+        }
+        Ok(tc.key.clone())
     }
 
-    pub fn disable_tool(&mut self, tool_id: &str) {
-        if let Some(tool) = self.tools.iter_mut().find(|t| t.id == tool_id) {
-            tool.enabled = false;
+    fn new_key(&self, tool_id: &str) -> String {
+        if !self.tools.iter().any(|t| t.key == tool_id) {
+            return tool_id.to_string();
+        }
+        let mut n = 2;
+        loop {
+            let k = format!("{}-{}", tool_id, n);
+            if !self.tools.iter().any(|t| t.key == k) {
+                return k;
+            }
+            n += 1;
+        }
+    }
+
+    /// Stop watching one entry. The tool's last entry is kept (disabled) so its
+    /// options survive; extra entries are removed. Returns the folder to unwatch.
+    pub fn disable_tool(&mut self, key: &str) -> Option<PathBuf> {
+        let idx = self.tools.iter().position(|t| t.key == key)?;
+        let folder = self.tools[idx].folder_path.clone().map(PathBuf::from);
+        let id = self.tools[idx].id.clone();
+        let others = self.tools.iter().filter(|t| t.id == id && t.key != key).count();
+        if others > 0 {
+            self.tools.remove(idx);
+        } else {
+            self.tools[idx].enabled = false;
+        }
+        folder
+    }
+
+    /// Old configs have no entry keys: use the tool id, made unique.
+    pub fn migrate_keys(&mut self) {
+        let mut seen: Vec<String> = Vec::new();
+        for i in 0..self.tools.len() {
+            if self.tools[i].key.is_empty() {
+                self.tools[i].key = self.tools[i].id.clone();
+            }
+            if seen.contains(&self.tools[i].key) {
+                let base = self.tools[i].id.clone();
+                let mut n = 2;
+                while seen.contains(&format!("{}-{}", base, n)) { n += 1; }
+                self.tools[i].key = format!("{}-{}", base, n);
+            }
+            seen.push(self.tools[i].key.clone());
         }
     }
 
@@ -329,7 +393,8 @@ pub fn load_config() -> Result<AppConfig, ConfigError> {
     let path = get_config_path()?;
     if path.exists() {
         let content = fs::read_to_string(&path)?;
-        let config: AppConfig = serde_json::from_str(&content)?;
+        let mut config: AppConfig = serde_json::from_str(&content)?;
+        config.migrate_keys();
         Ok(config)
     } else {
         Ok(AppConfig::default())

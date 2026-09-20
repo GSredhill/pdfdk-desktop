@@ -4,7 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { t, bi } from "../i18n";
 import type { ToolDefinition, ToolOption } from "../types";
 
-const props = defineProps<{ tool: ToolDefinition; values: Record<string, unknown> }>();
+const props = defineProps<{ tool: ToolDefinition; values: Record<string, unknown>; entryKey?: string | null }>();
 const emit = defineEmits<{ (e: "close"): void; (e: "saved"): void }>();
 
 // start from the schema defaults, then whatever the user saved
@@ -43,7 +43,7 @@ async function save() {
       if (o.type === "number") out[o.name] = Number(out[o.name]);
       if (o.type === "text" && (out[o.name] === "" || out[o.name] == null) && !o.required) delete out[o.name];
     }
-    await invoke("update_tool_options", { toolId: props.tool.id, options: out });
+    await invoke("update_tool_options", { toolId: props.tool.id, options: out, key: props.entryKey ?? null });
     emit("saved");
   } catch (e) {
     error.value = String(e);

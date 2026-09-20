@@ -9,8 +9,10 @@ const config = {
   version: 2,
   general: { startOnLogin: true, startMinimized: true, showNotifications: true, language: "da", theme: "system" },
   tools: [
-    { id: "compress", enabled: true, folderPath: "/Users/demo/PDF.dk/Komprimer", outputMode: "subfolder", options: { quality: "high" }, accepts: ["pdf"], output: "pdf", name: { da: "Komprimer PDF", en: "Compress PDF" } },
-    { id: "outline", enabled: true, folderPath: "/Users/demo/PDF.dk/Kurver", outputMode: "subfolder", options: {}, accepts: ["pdf"], output: "pdf", name: { da: "Tekst til kurver", en: "Fonts to outlines" } },
+    { id: "compress", key: "compress", enabled: true, folderPath: "/Users/demo/PDF.dk/Komprimer", outputMode: "subfolder", options: { quality: "high" }, accepts: ["pdf"], output: "pdf", name: { da: "Komprimer PDF", en: "Compress PDF" } },
+    { id: "outline", key: "outline", enabled: true, folderPath: "/Users/demo/PDF.dk/Kurver", outputMode: "subfolder", options: {}, accepts: ["pdf"], output: "pdf", name: { da: "Tekst til kurver", en: "Fonts to outlines" } },
+    { id: "color-profile", key: "color-profile", enabled: true, folderPath: "/Users/demo/PDF.dk/Farveprofil/Konverter", outputMode: "subfolder", options: { mode: "convert", profile: "fogra39", intent: "RelativeColorimetric" }, accepts: ["pdf"], output: "pdf", name: { da: "Farveprofil", en: "Colour profile" } },
+    { id: "color-profile", key: "color-profile-2", enabled: true, folderPath: "/Users/demo/PDF.dk/Farveprofil/Tjek", outputMode: "subfolder", options: { mode: "check", profile: "fogra39", intent: "RelativeColorimetric" }, accepts: ["pdf"], output: "pdf", name: { da: "Farveprofil", en: "Colour profile" } },
   ] as any[],
 };
 
@@ -47,15 +49,25 @@ const handlers: Record<string, Handler> = {
   start_watchers: () => null,
   // ?drop=1 simulates files handed over by the OS (dock drop / open-with) on start
   take_pending_files: () => (new URLSearchParams(location.search).get("drop") ? ["/Users/demo/Downloads/Årsrapport 2025.pdf", "/Users/demo/Downloads/bilag-7.pdf"] : []),
-  enable_tool: ({ toolId, folderPath }) => {
+  enable_tool: ({ toolId, folderPath, key }) => {
     const def = fixture.data.tools.find((t: any) => t.id === toolId);
-    const existing = config.tools.find((t) => t.id === toolId);
+    if (config.tools.some((t) => t.enabled && t.folderPath === folderPath && t.key !== key)) throw `${folderPath} is already watched`;
+    const existing = key ? config.tools.find((t) => t.key === key) : config.tools.find((t) => t.id === toolId && !t.enabled);
     if (existing) Object.assign(existing, { enabled: true, folderPath });
-    else config.tools.push({ id: toolId, enabled: true, folderPath, outputMode: "subfolder", options: {}, accepts: def?.accepts, output: def?.output, name: def?.name });
+    else {
+      const n = config.tools.filter((t) => t.id === toolId).length;
+      config.tools.push({ id: toolId, key: n ? `${toolId}-${n + 1}` : toolId, enabled: true, folderPath, outputMode: "subfolder", options: {}, accepts: def?.accepts, output: def?.output, name: def?.name });
+    }
     return null;
   },
-  disable_tool: ({ toolId }) => { const t = config.tools.find((x) => x.id === toolId); if (t) t.enabled = false; return null; },
-  update_tool_options: ({ toolId, options }) => { const t = config.tools.find((x) => x.id === toolId); if (t) t.options = options; return null; },
+  disable_tool: ({ key }) => {
+    const i = config.tools.findIndex((t) => t.key === key);
+    if (i < 0) return null;
+    const others = config.tools.some((t) => t.id === config.tools[i].id && t.key !== key);
+    if (others) config.tools.splice(i, 1); else config.tools[i].enabled = false;
+    return null;
+  },
+  update_tool_options: ({ toolId, options, key }) => { const t = key ? config.tools.find((x) => x.key === key) : config.tools.find((x) => x.id === toolId); if (t) t.options = options; return null; },
   process_files: async ({ paths }) => { await new Promise((r) => setTimeout(r, 1200)); return paths.map((p: string) => ({ input: p, output: p.replace(/(\.[^.]+)$/, "_tool$1"), error: null })); },
   get_jobs: () => jobs,
   get_logs: () => ["[12:00:01] Tools catalogue 2026-09-20 loaded: 38 tools", "[12:00:02] Watching /Users/demo/PDF.dk/Komprimer for compress"],

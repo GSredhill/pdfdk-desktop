@@ -256,18 +256,26 @@ async fn find_tool(state: &AppState, tool_id: &str) -> Option<ToolDefinition> {
 }
 
 #[tauri::command]
-async fn enable_tool(app: AppHandle, state: tauri::State<'_, AppState>, tool_id: String, folder_path: String) -> Result<(), String> {
+async fn enable_tool(app: AppHandle, state: tauri::State<'_, AppState>, tool_id: String, folder_path: String, key: Option<String>) -> Result<(), String> {
     let def = find_tool(&state, &tool_id).await.ok_or_else(|| format!("Unknown tool: {}", tool_id))?;
+    // changing an existing entry's folder: stop watching the old one first
+    let old_folder = match key.as_deref() {
+        Some(k) => state.config.read().await.tools.iter().find(|t| t.key == k).and_then(|t| t.folder_path.clone()).map(PathBuf::from),
+        None => None,
+    };
     let tool_config = {
         let mut config = state.config.write().await;
-        config.enable_tool(&def, &folder_path).map_err(|e| e.to_string())?;
+        let k = config.enable_tool(&def, &folder_path, key.as_deref()).map_err(|e| e.to_string())?;
         config::save_config(&config).map_err(|e| e.to_string())?;
-        config.tools.iter().find(|t| t.id == tool_id).cloned()
+        config.tools.iter().find(|t| t.key == k).cloned()
     };
     if let Some(tc) = tool_config {
         ensure_watcher(&app, &state).await?;
         let mut guard = state.watcher.write().await;
         if let Some(w) = guard.as_mut() {
+            if let Some(old) = old_folder.filter(|o| o.as_os_str() != std::ffi::OsStr::new(&folder_path)) {
+                let _ = w.remove_folder(&old).await;
+            }
             w.add_folder(tc).await.map_err(|e| e.to_string())?;
         }
     }
@@ -275,16 +283,13 @@ async fn enable_tool(app: AppHandle, state: tauri::State<'_, AppState>, tool_id:
 }
 
 #[tauri::command]
-async fn disable_tool(state: tauri::State<'_, AppState>, tool_id: String) -> Result<(), String> {
+async fn disable_tool(state: tauri::State<'_, AppState>, key: String) -> Result<(), String> {
     let folder_path = {
-        let config = state.config.read().await;
-        config.tools.iter().find(|t| t.id == tool_id).and_then(|t| t.folder_path.clone()).map(PathBuf::from)
-    };
-    {
         let mut config = state.config.write().await;
-        config.disable_tool(&tool_id);
+        let f = config.disable_tool(&key);
         config::save_config(&config).map_err(|e| e.to_string())?;
-    }
+        f
+    };
     if let Some(path) = folder_path {
         let mut guard = state.watcher.write().await;
         if let Some(w) = guard.as_mut() {
@@ -294,17 +299,24 @@ async fn disable_tool(state: tauri::State<'_, AppState>, tool_id: String) -> Res
     Ok(())
 }
 
+/// `key` = one watched folder's options; without it the tool's first entry
+/// (also what drag-and-drop / Open with use), created disabled if needed.
 #[tauri::command]
-async fn update_tool_options(state: tauri::State<'_, AppState>, tool_id: String, options: serde_json::Value) -> Result<(), String> {
+async fn update_tool_options(state: tauri::State<'_, AppState>, tool_id: String, options: serde_json::Value, key: Option<String>) -> Result<(), String> {
     let mut config = state.config.write().await;
-    if let Some(tc) = config.tools.iter_mut().find(|t| t.id == tool_id) {
+    let found = match key.as_deref() {
+        Some(k) => config.tools.iter_mut().find(|t| t.key == k),
+        None => config.tools.iter_mut().find(|t| t.id == tool_id),
+    };
+    if let Some(tc) = found {
         tc.options = options;
+    } else if key.is_some() {
+        return Err("Unknown folder entry".to_string());
     } else {
-        // options for a tool that is not a watched folder yet (quick actions)
         let def = { let cat = state.catalog.read().await; cat.iter().find(|t| t.id == tool_id).cloned() };
         let Some(def) = def else { return Err(format!("Unknown tool: {}", tool_id)) };
         config.tools.push(ToolConfig {
-            id: def.id.clone(), enabled: false, folder_path: None, output_mode: config::OutputMode::Subfolder,
+            id: def.id.clone(), key: def.id.clone(), enabled: false, folder_path: None, output_mode: config::OutputMode::Subfolder,
             options, endpoint: Some(def.endpoint.clone()), file_field: Some(def.file_field.clone()),
             accepts: def.accepts.clone(), output: Some(def.output.clone()), name: Some(def.name.clone()),
         });
@@ -357,7 +369,8 @@ async fn process_files(app: AppHandle, state: tauri::State<'_, AppState>, tool_i
             }
         }
         (ToolConfig {
-            id: def.id.clone(), enabled: true, folder_path: None, output_mode: config::OutputMode::SameFolder,
+            id: def.id.clone(),
+            key: def.id.clone(), enabled: true, folder_path: None, output_mode: config::OutputMode::SameFolder,
             options, endpoint: Some(def.endpoint.clone()), file_field: Some(def.file_field.clone()),
             accepts: def.accepts.clone(), output: Some(def.output.clone()), name: Some(def.name.clone()),
         }, config.general.language.clone())
