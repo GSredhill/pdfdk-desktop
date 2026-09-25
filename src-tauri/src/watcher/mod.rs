@@ -243,8 +243,8 @@ pub async fn run_tool(
     let endpoint_id = tool.endpoint.as_deref().map(|e| e.trim_start_matches("/api/")).unwrap_or(&tool.id).to_string();
     let file_field = tool.file_field.clone().unwrap_or_else(|| "file".to_string());
 
-    let job_uuid = client.process_file(input, &endpoint_id, &file_field, &tool.options).await?;
-    let job = client.poll_job(&job_uuid).await?;
+    let job_uuid = crate::api::with_retry("Upload", 3, || client.process_file(input, &endpoint_id, &file_field, &tool.options)).await?;
+    let job = crate::api::with_retry("Status", 3, || client.poll_job(&job_uuid)).await?;
 
     // the server knows the real output type (zip, docx, svg …) and the suffix
     // it would give a web download ("komprimeret", or the detected colour
@@ -265,7 +265,7 @@ pub async fn run_tool(
     if let Ok(mut set) = produced_outputs().lock() {
         set.insert(output_path.clone());
     }
-    client.download_result(&job_uuid, &output_path).await?;
+    crate::api::with_retry("Download", 3, || client.download_result(&job_uuid, &output_path)).await?;
     Ok(output_path)
 }
 
@@ -289,14 +289,30 @@ async fn move_to_originals(file_path: &Path) -> Result<(), std::io::Error> {
 
 fn get_output_path(input_path: &Path, config: &ToolConfig, suffix: &str, ext: &str, output_dir: Option<&Path>) -> PathBuf {
     let stem = input_path.file_stem().and_then(|s| s.to_str()).unwrap_or("output");
-    let output_filename = format!("{}_{}.{}", stem, suffix, ext);
-    if let Some(dir) = output_dir {
-        return dir.join(&output_filename);
-    }
     let parent = input_path.parent().unwrap_or(Path::new("."));
-    match &config.output_mode {
-        OutputMode::SameFolder => parent.join(&output_filename),
-        OutputMode::Subfolder => parent.join("Processed").join(&output_filename),
-        OutputMode::Custom(custom) => PathBuf::from(custom).join(&output_filename),
+    let dir: PathBuf = match output_dir {
+        Some(d) => d.to_path_buf(),
+        None => match &config.output_mode {
+            OutputMode::SameFolder => parent.to_path_buf(),
+            OutputMode::Subfolder => parent.join("Processed"),
+            OutputMode::Custom(custom) => PathBuf::from(custom),
+        },
+    };
+    unique_path(&dir, &format!("{}_{}", stem, suffix), ext)
+}
+
+/// "Katalog_komprimeret.pdf", then "Katalog_komprimeret (2).pdf", … — a second run
+/// must never overwrite the first result silently.
+fn unique_path(dir: &Path, base: &str, ext: &str) -> PathBuf {
+    let first = dir.join(format!("{}.{}", base, ext));
+    if !first.exists() {
+        return first;
     }
+    for n in 2..1000 {
+        let p = dir.join(format!("{} ({}).{}", base, n, ext));
+        if !p.exists() {
+            return p;
+        }
+    }
+    first
 }

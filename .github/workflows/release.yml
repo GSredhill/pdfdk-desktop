@@ -52,5 +52,6 @@ jobs:
           releaseName: 'PDF.dk Desktop v__VERSION__'
           releaseBody: 'See the assets below to download and install this version.'
           releaseDraft: true
+          includeUpdaterJson: true   # latest.json for the in-app updater (endpoint in tauri.conf.json)
           prerelease: false
           args: ${{ matrix.args }}

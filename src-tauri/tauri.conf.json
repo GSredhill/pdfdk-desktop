@@ -41,13 +41,70 @@
       "icons/icon.ico"
     ],
     "fileAssociations": [
-      { "ext": ["pdf"], "mimeType": "application/pdf", "description": "PDF document", "role": "Viewer" },
-      { "ext": ["png", "jpg", "jpeg", "webp", "gif", "bmp", "tif", "tiff"], "description": "Image", "role": "Viewer" },
-      { "ext": ["heic", "heif"], "description": "HEIC image", "role": "Viewer" },
-      { "ext": ["svg", "eps", "ai"], "description": "Vector artwork", "role": "Viewer" },
-      { "ext": ["stl", "step", "stp"], "description": "3D model", "role": "Viewer" },
-      { "ext": ["eml", "msg"], "description": "Email", "role": "Viewer" },
-      { "ext": ["ppt", "pptx"], "description": "Presentation", "role": "Viewer" }
+      {
+        "ext": [
+          "pdf"
+        ],
+        "mimeType": "application/pdf",
+        "description": "PDF document",
+        "role": "Viewer"
+      },
+      {
+        "ext": [
+          "png",
+          "jpg",
+          "jpeg",
+          "webp",
+          "gif",
+          "bmp",
+          "tif",
+          "tiff"
+        ],
+        "description": "Image",
+        "role": "Viewer"
+      },
+      {
+        "ext": [
+          "heic",
+          "heif"
+        ],
+        "description": "HEIC image",
+        "role": "Viewer"
+      },
+      {
+        "ext": [
+          "svg",
+          "eps",
+          "ai"
+        ],
+        "description": "Vector artwork",
+        "role": "Viewer"
+      },
+      {
+        "ext": [
+          "stl",
+          "step",
+          "stp"
+        ],
+        "description": "3D model",
+        "role": "Viewer"
+      },
+      {
+        "ext": [
+          "eml",
+          "msg"
+        ],
+        "description": "Email",
+        "role": "Viewer"
+      },
+      {
+        "ext": [
+          "ppt",
+          "pptx"
+        ],
+        "description": "Presentation",
+        "role": "Viewer"
+      }
     ],
     "macOS": {
       "minimumSystemVersion": "10.15",
@@ -57,10 +114,17 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDFDQzE1NkMxN0ZFQ0IwNEMKUldSTXNPeC93VmJCSEpvUFBPeTJENWRYM0MxVHFnQzBsbjlLek1pWkVzSnBXMFdKTnBBVWcvN1gK",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDQ0RkI0Mjc2QzFBRERDQkYKUldTLzNLM0Jka0w3UkkrUFBwN1NBUjczS3JyNmRnRmF5aGRqMk5iaE9XQnJrWi9PSmtySUxtaXUK",
       "endpoints": [
         "https://github.com/GSredhill/pdfdk-desktop/releases/latest/download/latest.json"
       ]
+    },
+    "deep-link": {
+      "desktop": {
+        "schemes": [
+          "pdfdk"
+        ]
+      }
     }
   }
 }

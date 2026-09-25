@@ -61,3 +61,8 @@ impl Job {
         self.completed_at = Some(now());
     }
 }
+
+/// A copy of one job, for retrying it.
+pub fn job_get(id: &str) -> Option<Job> {
+    crate::job_find(id)
+}

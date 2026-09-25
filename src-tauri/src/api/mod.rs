@@ -50,6 +50,43 @@ pub enum ApiError {
     FileTooLarge(i32),
 }
 
+impl ApiError {
+    /// Worth another attempt: the network hiccupped or the server had a bad moment.
+    /// Everything the user or their plan caused (401, limits, validation) is final.
+    pub fn is_transient(&self) -> bool {
+        match self {
+            ApiError::Network(e) => e.is_timeout() || e.is_connect() || e.is_request() || e.status().map_or(true, |s| s.is_server_error()),
+            ApiError::ServerError(msg) => {
+                let m = msg.to_ascii_lowercase();
+                m.contains("502") || m.contains("503") || m.contains("504") || m.contains("gateway") || m.contains("timeout")
+            }
+            _ => false,
+        }
+    }
+}
+
+/// Run `op` up to `attempts` times with backoff (2 s, 5 s, 10 s) while the error is transient.
+pub async fn with_retry<T, F, Fut>(what: &str, attempts: u32, mut op: F) -> Result<T, ApiError>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<T, ApiError>>,
+{
+    let waits = [2u64, 5, 10];
+    let mut n = 0;
+    loop {
+        match op().await {
+            Ok(v) => return Ok(v),
+            Err(e) if e.is_transient() && n + 1 < attempts => {
+                let wait = waits[(n as usize).min(waits.len() - 1)];
+                crate::add_log(&format!("{} failed ({}), retrying in {} s ({}/{})", what, e, wait, n + 1, attempts - 1));
+                tokio::time::sleep(Duration::from_secs(wait)).await;
+                n += 1;
+            }
+            Err(e) => return Err(e),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UploadResponse {
     pub success: bool,
@@ -227,10 +264,14 @@ impl PdfDkClient {
 
         info!("Uploading {} to /{}", file_name, endpoint_id);
 
-        let file_bytes = fs::read(file_path).await?;
+        // Streamed from disk (a 500 MB print file must not sit in RAM) with the
+        // length known, so the server sees a normal multipart upload.
+        let len = fs::metadata(file_path).await?.len();
+        let file = fs::File::open(file_path).await?;
+        let stream = tokio_util::io::ReaderStream::new(file);
         let mut form = multipart::Form::new().part(
             file_field.to_string(),
-            multipart::Part::bytes(file_bytes)
+            multipart::Part::stream_with_length(reqwest::Body::wrap_stream(stream), len)
                 .file_name(file_name.clone())
                 .mime_str(mime_for(file_path))
                 .unwrap(),
@@ -251,7 +292,15 @@ impl PdfDkClient {
         let url = format!("{}/{}", api_base(), endpoint_id);
         debug!("POST {}", url);
 
-        let response = self.with_auth(self.client.post(&url)).multipart(form).send().await?;
+        // Uploads get their own, long timeout: the client default (10 min) is for
+        // polling. 500 MB on a slow office uplink can take a while; the server
+        // allows 1 GB / 600 s per request.
+        let response = self
+            .with_auth(self.client.post(&url))
+            .timeout(Duration::from_secs(3600))
+            .multipart(form)
+            .send()
+            .await?;
         let status = response.status();
 
         if status == reqwest::StatusCode::UNAUTHORIZED {

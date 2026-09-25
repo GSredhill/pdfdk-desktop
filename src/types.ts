@@ -43,7 +43,7 @@ export interface ToolConfig {
   key: string; // one entry per watched folder; a tool can have several
   enabled: boolean;
   folderPath: string | null;
-  outputMode: string;
+  outputMode: string | { custom: string }; // "subfolder" | "same-folder" | { custom: path }
   options: Record<string, unknown>;
   endpoint?: string | null;
   fileField?: string | null;

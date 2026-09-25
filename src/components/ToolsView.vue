@@ -84,6 +84,31 @@ async function chooseFolder(tool: ToolDefinition, entry: ToolConfig | null = nul
     busyTool.value = "";
   }
 }
+function outMode(entry: ToolConfig): "subfolder" | "same" | "custom" {
+  if (typeof entry.outputMode === "object") return "custom";
+  return entry.outputMode === "same-folder" ? "same" : "subfolder";
+}
+function outTitle(entry: ToolConfig): string {
+  return typeof entry.outputMode === "object" ? entry.outputMode.custom : "";
+}
+async function setOutput(tool: ToolDefinition, entry: ToolConfig, mode: string) {
+  let path: string | null = null;
+  if (mode === "custom") {
+    const selected = await open({ directory: true, multiple: false, title: bi(tool.name) });
+    if (!selected || typeof selected !== "string") { emit("config-changed"); return; }   // re-render the old value
+    path = selected;
+  }
+  busyTool.value = tool.id;
+  error.value = "";
+  try {
+    await invoke("update_tool_output", { key: entry.key, mode, path });
+    emit("config-changed");
+  } catch (e) {
+    error.value = String(e);
+  } finally {
+    busyTool.value = "";
+  }
+}
 async function disable(tool: ToolDefinition, entry: ToolConfig) {
   busyTool.value = tool.id;
   try {
@@ -153,6 +178,14 @@ async function disable(tool: ToolDefinition, entry: ToolConfig) {
               </button>
             </div>
             <div v-if="optionSummary(tool, entry.options)" class="tc-folder-opts">{{ optionSummary(tool, entry.options) }}</div>
+            <div class="tc-folder-out">
+              <span>{{ t("outputWhere") }}</span>
+              <select class="tc-out" :value="outMode(entry)" :title="outTitle(entry)" @change="setOutput(tool, entry, ($event.target as HTMLSelectElement).value)">
+                <option value="subfolder">{{ t("outputSubfolder") }}</option>
+                <option value="same">{{ t("outputSame") }}</option>
+                <option value="custom">{{ typeof entry.outputMode === "object" ? shortFolder(entry.outputMode.custom) : t("outputCustom") }}</option>
+              </select>
+            </div>
           </div>
 
           <div class="tc-actions">
@@ -213,6 +246,8 @@ async function disable(tool: ToolDefinition, entry: ToolConfig) {
 .tc-folder-row > svg { width: 15px; height: 15px; flex: none; color: var(--acc); margin-right: 2px; }
 .tc-path { color: var(--text2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
 .tc-folder-opts { margin: 4px 0 0 23px; color: var(--muted); font-size: 11.5px; }
+.tc-folder-out { margin: 4px 0 0 23px; display: flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--muted); }
+.tc-out { height: 22px; font-size: 11.5px; border-radius: 6px; border: 1px solid var(--cardline); background: var(--card); color: var(--text2); padding: 0 4px; max-width: 200px; }
 .tc-ib { width: 24px; height: 24px; flex: none; border: 0; border-radius: 6px; background: transparent; color: var(--faint); cursor: pointer; display: grid; place-items: center; }
 .tc-ib svg { width: 14px; height: 14px; }
 .tc-ib:hover { background: var(--card); color: var(--text); }

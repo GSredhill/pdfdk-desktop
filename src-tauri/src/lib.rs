@@ -50,6 +50,10 @@ fn job_add(job: processor::Job) -> String {
     id
 }
 
+pub fn job_find(id: &str) -> Option<processor::Job> {
+    JOBS.lock().ok().and_then(|jobs| jobs.iter().find(|j| j.id == id).cloned())
+}
+
 fn job_update(id: &str, f: impl FnOnce(&mut processor::Job)) {
     if let Ok(mut jobs) = JOBS.lock() {
         if let Some(j) = jobs.iter_mut().find(|j| j.id == id) {
@@ -67,6 +71,8 @@ pub struct AppState {
     pub catalog: Arc<RwLock<Vec<ToolDefinition>>>,
     /// files handed to us by the OS before the window was ready
     pub pending_files: Mutex<Vec<String>>,
+    /// browser sign-in in progress: (random state, started at)
+    pub login_state: Mutex<Option<(String, std::time::Instant)>>,
 }
 
 fn notify<R: Runtime>(app: &AppHandle<R>, cfg: &Arc<RwLock<AppConfig>>, title: &str, body: &str) {
@@ -183,6 +189,148 @@ async fn login(state: tauri::State<'_, AppState>, email: String, password: Strin
         let _ = auth::clear_credentials();
     }
     Ok(result)
+}
+
+/// Browser sign-in, step 1: open pdf.dk/desktop-login with a one-time state. The page
+/// signs the user in (e-mail, Google, Microsoft — whatever they use) and sends the
+/// token back through pdfdk://auth?token=…&state=… (handled in `handle_deep_link`).
+#[tauri::command]
+async fn start_browser_login(state: tauri::State<'_, AppState>) -> Result<String, String> {
+    let nonce = uuid::Uuid::new_v4().simple().to_string();
+    if let Ok(mut g) = state.login_state.lock() {
+        *g = Some((nonce.clone(), std::time::Instant::now()));
+    }
+    let lang = state.config.read().await.general.language.clone();
+    let prefix = if lang == "en" { "/en" } else { "" };
+    let url = format!("{}{}/desktop-login?state={}", api::site_base(), prefix, nonce);
+    tauri_plugin_opener::open_url(&url, None::<&str>).map_err(|e| e.to_string())?;
+    Ok(url)
+}
+
+/// Browser sign-in, step 2 (also usable by the "paste code" fallback on the login page).
+#[tauri::command]
+async fn login_with_token(state: tauri::State<'_, AppState>, token: String) -> Result<auth::AuthState, String> {
+    let mut result = auth::validate_token(token.trim()).await.map_err(|e| e.to_string())?;
+    fill_usage(&mut result).await;
+    {
+        let mut auth_state = state.auth.write().await;
+        *auth_state = result.clone();
+    }
+    auth::save_token(token.trim()).map_err(|e| e.to_string())?;
+    let _ = auth::clear_credentials();
+    Ok(result)
+}
+
+fn handle_deep_link(app: &AppHandle, url: &str) {
+    let Ok(parsed) = url::Url::parse(url) else { return };
+    if parsed.scheme() != "pdfdk" || parsed.host_str() != Some("auth") {
+        return;
+    }
+    let mut token = None;
+    let mut state_param = None;
+    for (k, v) in parsed.query_pairs() {
+        match k.as_ref() {
+            "token" => token = Some(v.to_string()),
+            "state" => state_param = Some(v.to_string()),
+            _ => {}
+        }
+    }
+    let (Some(token), Some(state_param)) = (token, state_param) else { return };
+    let Some(state) = app.try_state::<AppState>() else { return };
+    let expected = state.login_state.lock().ok().and_then(|g| g.clone());
+    match expected {
+        Some((nonce, started)) if nonce == state_param && started.elapsed().as_secs() < 900 => {}
+        _ => {
+            add_log("Ignored a sign-in link that was not requested by this app");
+            return;
+        }
+    }
+    if let Ok(mut g) = state.login_state.lock() {
+        *g = None;
+    }
+    show_main(app);
+    let app2 = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let state = app2.state::<AppState>();
+        match login_with_token(state, token).await {
+            Ok(auth) => {
+                add_log(&format!("Signed in via browser as {}", auth.user.as_ref().map(|u| u.email.clone()).unwrap_or_default()));
+                let _ = app2.emit("auth-changed", ());
+            }
+            Err(e) => {
+                add_log(&format!("Browser sign-in failed: {}", e));
+                let _ = app2.emit("auth-error", e);
+            }
+        }
+    });
+}
+
+/// Where a watched folder's results go: "subfolder" (Processed/), "same" or a custom folder.
+#[tauri::command]
+async fn update_tool_output(state: tauri::State<'_, AppState>, key: String, mode: String, path: Option<String>) -> Result<(), String> {
+    let new_mode = match mode.as_str() {
+        "same" => config::OutputMode::SameFolder,
+        "custom" => config::OutputMode::Custom(path.filter(|p| !p.is_empty()).ok_or("A folder is required")?),
+        _ => config::OutputMode::Subfolder,
+    };
+    let tc = {
+        let mut config = state.config.write().await;
+        let tc = config.tools.iter_mut().find(|t| t.key == key).ok_or("Unknown folder entry")?;
+        tc.output_mode = new_mode;
+        let copy = tc.clone();
+        config::save_config(&config).map_err(|e| e.to_string())?;
+        copy
+    };
+    // the watcher keeps its own copy of the entry
+    let mut guard = state.watcher.write().await;
+    if let (Some(w), Some(folder)) = (guard.as_mut(), tc.folder_path.clone()) {
+        let _ = w.remove_folder(Path::new(&folder)).await;
+        let _ = w.add_folder(tc).await;
+    }
+    Ok(())
+}
+
+/// Run a failed job again. A watched-folder file that is still in its folder goes
+/// through the folder's settings (result in Processed/, original to Originals/);
+/// anything else is treated like a dropped file (result next to the source).
+#[tauri::command]
+async fn retry_job(app: AppHandle, state: tauri::State<'_, AppState>, job_id: String) -> Result<(), String> {
+    let job = processor::job_get(&job_id).ok_or("Unknown job")?;
+    let input = PathBuf::from(&job.input_file);
+    if !input.is_file() {
+        return Err(if state.config.read().await.general.language == "en" { "The original file is no longer there".into() } else { "Originalfilen findes ikke længere".into() });
+    }
+    let parent = input.parent().map(|p| p.to_path_buf());
+    let entry = {
+        let config = state.config.read().await;
+        config.tools.iter().find(|t| t.id == job.tool_id && t.enabled && t.folder_path.as_deref().map(Path::new) == parent.as_deref()).cloned()
+    };
+    let token = state.auth.read().await.token.clone();
+    job_update(&job_id, |j| { j.status = processor::JobStatus::Processing; j.error = None; j.output_file = None; });
+    let result = match entry {
+        Some(tc) => watcher::process_file_event(watcher::FileEvent { path: input.clone(), tool_id: tc.id.clone(), tool_config: tc }, token).await,
+        None => {
+            let out = process_files(app.clone(), state.clone(), job.tool_id.clone(), vec![job.input_file.clone()]).await?;
+            match out.into_iter().next() {
+                Some(r) if r.output.is_some() => Ok(PathBuf::from(r.output.unwrap())),
+                Some(r) => Err(api::ApiError::ServerError(r.error.unwrap_or_default())),
+                None => Err(api::ApiError::ServerError("no result".into())),
+            }
+        }
+    };
+    let file_name = input.file_name().and_then(|n| n.to_str()).unwrap_or("file").to_string();
+    match result {
+        Ok(output) => {
+            job_update(&job_id, |j| j.set_completed(&output.to_string_lossy()));
+            add_log(&format!("Retry OK: {} → {:?}", file_name, output));
+            Ok(())
+        }
+        Err(e) => {
+            job_update(&job_id, |j| j.set_failed(&e.to_string()));
+            add_log(&format!("Retry FAILED: {} — {}", file_name, e));
+            Err(e.to_string())
+        }
+    }
 }
 
 #[tauri::command]
@@ -487,6 +635,16 @@ pub fn run() {
     let cli_files: Vec<String> = std::env::args().skip(1).filter(|a| !a.starts_with('-') && Path::new(a).is_file()).collect();
 
     let app = tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            // second launch (Windows deep link / double-click): hand over and show the window
+            let files: Vec<String> = args.iter().skip(1).filter(|a| !a.starts_with('-') && Path::new(a).is_file()).cloned().collect();
+            if !files.is_empty() {
+                deliver_files(app, files);
+            } else {
+                show_main(app);
+            }
+        }))
+        .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -506,7 +664,21 @@ pub fn run() {
                 watcher: Arc::new(RwLock::new(None)),
                 catalog: Arc::new(RwLock::new(cached)),
                 pending_files: Mutex::new(cli_files.clone()),
+                login_state: Mutex::new(None),
             });
+
+            // pdfdk://auth?token=…&state=… comes back from the website after a browser sign-in
+            {
+                use tauri_plugin_deep_link::DeepLinkExt;
+                #[cfg(any(target_os = "linux", windows))]
+                let _ = app.deep_link().register_all();
+                let handle = app.handle().clone();
+                app.deep_link().on_open_url(move |event| {
+                    for url in event.urls() {
+                        handle_deep_link(&handle, url.as_str());
+                    }
+                });
+            }
 
             if let Err(e) = setup_tray(app) {
                 error!("Failed to setup tray: {}", e);
@@ -545,6 +717,10 @@ pub fn run() {
             get_jobs,
             get_site_base,
             get_saved_credentials,
+            start_browser_login,
+            login_with_token,
+            update_tool_output,
+            retry_job,
             get_logs,
             clear_logs,
         ])

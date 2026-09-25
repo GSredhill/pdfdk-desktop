@@ -15,6 +15,12 @@ async function refresh() {
   jobs.value = await invoke<Job[]>("get_jobs");
   if (showLogs.value) logs.value = await invoke<string[]>("get_logs");
 }
+const retrying = ref<Record<string, boolean>>({});
+async function retry(j: Job) {
+  retrying.value[j.id] = true;
+  try { await invoke("retry_job", { jobId: j.id }); } catch { /* the job row shows the error */ }
+  finally { retrying.value[j.id] = false; await refresh(); }
+}
 async function clearLogs() {
   await invoke("clear_logs");
   logs.value = [];
@@ -51,6 +57,7 @@ watch(showLogs, (v) => { if (v) refresh(); });
           <div class="av-sub">{{ j.toolName }} · {{ when(j.createdAt) }}<span v-if="j.error"> · <span class="av-err">{{ j.error }}</span></span></div>
         </div>
         <span v-if="j.status === 'processing'" class="spin" style="width:14px;height:14px"></span>
+        <button v-if="j.status === 'failed'" class="btn btn-sm" :disabled="retrying[j.id]" @click="retry(j)">{{ t("retry") }}</button>
         <button v-if="j.outputFile" class="btn btn-sm btn-ghost" @click="revealItemInDir(j.outputFile!)">{{ t("showInFolder") }}</button>
       </div>
     </div>

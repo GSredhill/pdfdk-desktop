@@ -31,6 +31,8 @@ const droppedFiles = ref<string[]>([]);
 const dragOver = ref(false);
 
 const signedIn = computed(() => auth.value.isAuthenticated);
+// the app is for Pro (incl. trial, team, admin-granted) — free accounts see the gate
+const hasPro = computed(() => auth.value.isPro || !!auth.value.isUnlimited || !!auth.value.user?.isSuperadmin);
 const planLabel = computed(() => {
   const p = (auth.value.plan || "free").toLowerCase();
   if (p === "team" || p === "superadmin" || p === "enterprise") return "PRO";
@@ -68,12 +70,18 @@ async function afterSignIn() {
   await loadConfig();
   // always refetch the catalogue on start; the Rust side falls back to the cached copy when offline
   await loadTools(true);
+  if (!hasPro.value) return;   // nothing runs for a free account
   await invoke("start_watchers").catch((e) => console.error(e));
   const pending = await invoke<string[]>("take_pending_files");
   if (pending.length) droppedFiles.value = pending;
 }
 async function refreshAuth() {
   auth.value = await invoke<AuthState>("check_auth");
+}
+/** "Check again" on the Pro gate: the user just started a trial on the website */
+async function recheckPlan() {
+  await refreshAuth();
+  if (hasPro.value) await afterSignIn();
 }
 async function signOut() {
   await invoke("logout");
@@ -157,6 +165,20 @@ onBeforeUnmount(() => {
       @signed-in="(a) => { auth = a; afterSignIn(); }"
     />
 
+    <div v-else-if="!hasPro" class="gate">
+      <div class="gate-card card">
+        <span class="pdk-brand" style="font-size:30px">pdf<i class="pdk-dot"></i>dk</span>
+        <h1 class="gate-h">{{ t("proRequiredTitle") }}</h1>
+        <p class="gate-p">{{ t("proRequiredBody") }}</p>
+        <p class="gate-who mono">{{ auth.user?.email }}</p>
+        <div class="gate-actions">
+          <button class="btn btn-primary btn-lg" @click="openUrl(`${siteBase}/priser`)">{{ t("seePrices") }}</button>
+          <button class="btn btn-lg" @click="recheckPlan">{{ t("checkAgain") }}</button>
+          <button class="btn btn-ghost btn-lg" @click="signOut">{{ t("signOut") }}</button>
+        </div>
+      </div>
+    </div>
+
     <template v-else>
       <header class="hdr">
         <div class="hdr-l">
@@ -216,6 +238,12 @@ onBeforeUnmount(() => {
 </template>
 
 <style>
+.gate { min-height: 100vh; display: grid; place-items: center; padding: 24px; }
+.gate-card { width: 440px; max-width: 100%; padding: 32px 30px; display: flex; flex-direction: column; gap: 10px; align-items: flex-start; }
+.gate-h { font-size: 22px; margin-top: 8px; }
+.gate-p { margin: 0; color: var(--muted); }
+.gate-who { font-size: 12px; color: var(--faint); }
+.gate-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
 .app { height: 100vh; display: flex; flex-direction: column; position: relative; }
 .boot { flex: 1; display: grid; place-items: center; }
 
