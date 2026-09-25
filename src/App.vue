@@ -133,6 +133,10 @@ onMounted(async () => {
   if (signedIn.value) await afterSignIn();
   loading.value = false;
   checkForUpdates();
+  // the app runs for weeks in the background: look again every 6 hours, and when the
+  // window is brought back (the moment someone would notice an "Opdatér" button)
+  setInterval(() => { if (!update.value) checkForUpdates(); }, 6 * 60 * 60 * 1000);
+  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible" && !update.value) checkForUpdates(); });
 
   unlistenOpened = await listen<string[]>("files-opened", (e) => {
     if (signedIn.value) droppedFiles.value = [...droppedFiles.value, ...e.payload];
