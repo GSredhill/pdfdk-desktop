@@ -333,6 +333,19 @@ async fn retry_job(app: AppHandle, state: tauri::State<'_, AppState>, job_id: St
     }
 }
 
+/// Test hook: PDFDK_AUTO_UPDATE_TEST=1 makes the app install an available update
+/// right after the start-up check (used to reproduce updater failures from a terminal).
+#[tauri::command]
+fn auto_update_test() -> bool {
+    std::env::var("PDFDK_AUTO_UPDATE_TEST").map(|v| v == "1").unwrap_or(false)
+}
+
+/// The webview's errors end up in the in-app log (Activity → logs), where a user can see them.
+#[tauri::command]
+fn log_client(message: String) {
+    add_log(&format!("UI: {}", message.chars().take(500).collect::<String>()));
+}
+
 #[tauri::command]
 async fn get_saved_credentials() -> Result<Option<serde_json::Value>, String> {
     match auth::load_credentials() {
@@ -717,6 +730,8 @@ pub fn run() {
             get_jobs,
             get_site_base,
             get_saved_credentials,
+            log_client,
+            auto_update_test,
             start_browser_login,
             login_with_token,
             update_tool_output,

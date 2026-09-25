@@ -116,6 +116,8 @@ const strings: Record<string, { da: string; en: string }> = {
   processedVia: { da: "Filer behandles på pdf.dk's servere i Norden og slettes automatisk bagefter.", en: "Files are processed on pdf.dk's servers in the Nordics and deleted automatically afterwards." },
   checkUpdates: { da: "Søg efter opdatering", en: "Check for updates" },
   upToDate: { da: "Du har den nyeste version", en: "You have the latest version" },
+  updateFailed: { da: "Opdatering fejlede", en: "Update failed" },
+  downloadManually: { da: "hent manuelt", en: "download manually" },
 };
 
 export function t(key: string, vars?: Record<string, string | number>): string {

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onBeforeUnmount, watch } from "vue";
+import { ref, computed, onMounted, onBeforeUnmount, watch, markRaw } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
@@ -27,6 +27,7 @@ const siteBase = ref("https://pdf.dk");
 const version = ref("");
 const update = ref<Update | null>(null);
 const updating = ref(false);
+const updateError = ref("");
 const droppedFiles = ref<string[]>([]);
 const dragOver = ref(false);
 
@@ -97,7 +98,9 @@ async function saveConfig(next: AppConfig) {
 async function checkForUpdates(): Promise<boolean> {
   try {
     const u = await check();
-    if (u) { update.value = u; return true; }
+    // markRaw: the Update object has private class fields, which cannot be read through
+    // Vue's reactive proxy — that made every install fail with "Cannot read private member"
+    if (u) { update.value = markRaw(u); return true; }
   } catch (e) {
     console.log("updater:", e);
   }
@@ -110,9 +113,13 @@ async function installUpdate() {
     await update.value.downloadAndInstall();
     await relaunch();
   } catch (e) {
+    // say what went wrong (and keep it in the app log) instead of silently sending
+    // people to the download page
+    const msg = String(e);
     console.error("update failed", e);
+    updateError.value = msg;
+    invoke("log_client", { message: `Update to ${update.value?.version} failed: ${msg}` }).catch(() => {});
     updating.value = false;
-    await openUrl(`${siteBase.value}/desktop`);
   }
 }
 
@@ -132,7 +139,12 @@ onMounted(async () => {
   await refreshAuth();
   if (signedIn.value) await afterSignIn();
   loading.value = false;
-  checkForUpdates();
+  checkForUpdates().then(async (found) => {
+    if (found && (await invoke<boolean>("auto_update_test").catch(() => false))) {
+      invoke("log_client", { message: `auto-update test: installing ${update.value?.version}` }).catch(() => {});
+      installUpdate();
+    }
+  });
   // the app runs for weeks in the background: look again every 6 hours, and when the
   // window is brought back (the moment someone would notice an "Opdatér" button)
   setInterval(() => { if (!update.value) checkForUpdates(); }, 6 * 60 * 60 * 1000);
@@ -195,9 +207,10 @@ onBeforeUnmount(() => {
           <button class="nav-btn" :class="{ on: view === 'settings' }" @click="view = 'settings'">{{ t("settings") }}</button>
         </nav>
         <div class="hdr-r">
-          <button v-if="update" class="btn btn-sm btn-primary" :disabled="updating" @click="installUpdate">
+          <button v-if="update" class="btn btn-sm btn-primary" :disabled="updating" @click="installUpdate" :title="updateError">
             {{ updating ? t("updating") : t("updateTo", { v: update.version }) }}
           </button>
+          <span v-if="updateError" class="hdr-uperr" :title="updateError">{{ t("updateFailed") }} · <a href="#" @click.prevent="openUrl(`${siteBase}/desktop`)">{{ t("downloadManually") }}</a></span>
           <span v-if="usageText" class="hdr-usage mono">{{ usageText }}</span>
           <span class="pill" :class="auth.isPro ? 'pill-brand' : 'pill-muted'">{{ planLabel }}</span>
           <button class="btn btn-ghost btn-sm" :title="auth.user?.email" @click="openUrl(siteBase)">{{ t("openWebsite") }}</button>
@@ -242,6 +255,8 @@ onBeforeUnmount(() => {
 </template>
 
 <style>
+.hdr-uperr { font-size: 11.5px; color: var(--bad); max-width: 260px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hdr-uperr a { color: var(--bad); text-decoration: underline; }
 .gate { min-height: 100vh; display: grid; place-items: center; padding: 24px; }
 .gate-card { width: 440px; max-width: 100%; padding: 32px 30px; display: flex; flex-direction: column; gap: 10px; align-items: flex-start; }
 .gate-h { font-size: 22px; margin-top: 8px; }

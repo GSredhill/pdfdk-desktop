@@ -74,6 +74,8 @@ const handlers: Record<string, Handler> = {
   login_with_token: ({ token }) => { if (token !== "mock") throw "Unauthorized - please login again"; return { ...auth(), isAuthenticated: true }; },
   update_tool_output: ({ key, mode, path }) => { const t = config.tools.find((x) => x.key === key); if (t) t.outputMode = mode === "custom" ? { custom: path } : mode === "same" ? "same-folder" : "subfolder"; return null; },
   retry_job: async ({ jobId }) => { const j = jobs.find((x) => x.id === jobId); await new Promise((r) => setTimeout(r, 800)); if (j) { j.status = "completed"; j.error = null; j.outputFile = j.inputFile.replace(/(\.[^.]+)$/, "_retry$1"); } return null; },
+  log_client: () => null,
+  auto_update_test: () => false,
   get_logs: () => ["[12:00:01] Tools catalogue 2026-09-20 loaded: 38 tools", "[12:00:02] Watching /Users/demo/PDF.dk/Komprimer for compress"],
   clear_logs: () => null,
 };
