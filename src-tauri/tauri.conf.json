@@ -114,7 +114,7 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDQ0RkI0Mjc2QzFBRERDQkYKUldTLzNLM0Jka0w3UkkrUFBwN1NBUjczS3JyNmRnRmF5aGRqMk5iaE9XQnJrWi9PSmtySUxtaXUK",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDFDQzE1NkMxN0ZFQ0IwNEMKUldSTXNPeC93VmJCSEpvUFBPeTJENWRYM0MxVHFnQzBsbjlLek1pWkVzSnBXMFdKTnBBVWcvN1gK",
       "endpoints": [
         "https://github.com/GSredhill/pdfdk-desktop/releases/latest/download/latest.json"
       ]
