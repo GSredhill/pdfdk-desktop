@@ -48,7 +48,7 @@ const handlers: Record<string, Handler> = {
   get_available_tools: () => fixture.data.tools,
   start_watchers: () => null,
   // ?drop=1 simulates files handed over by the OS (dock drop / open-with) on start
-  take_pending_files: () => (new URLSearchParams(location.search).get("drop") ? ["/Users/demo/Downloads/Årsrapport 2025.pdf", "/Users/demo/Downloads/bilag-7.pdf"] : []),
+  take_pending_files: () => { const d = new URLSearchParams(location.search).get("drop"); return d === "img" ? ["/Users/demo/Downloads/IMG_7731.jpeg", "/Users/demo/Downloads/IMG_7732.jpeg", "/Users/demo/Downloads/IMG_7733.heic"] : d ? ["/Users/demo/Downloads/Årsrapport 2025.pdf", "/Users/demo/Downloads/bilag-7.pdf"] : []; },
   enable_tool: ({ toolId, folderPath, key }) => {
     const def = fixture.data.tools.find((t: any) => t.id === toolId);
     if (config.tools.some((t) => t.enabled && t.folderPath === folderPath && t.key !== key)) throw `${folderPath} is already watched`;
