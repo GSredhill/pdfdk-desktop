@@ -15,6 +15,8 @@ const optionsFor = ref<ToolDefinition | null>(null);
 const results = ref<FileResult[] | null>(null);
 
 const exts = computed(() => [...new Set(props.files.map(fileExt))]);
+const combine = ref(true);   // several files → one result, for tools that take a batch
+const canCombine = computed(() => props.files.length > 1 && candidates.value.some((t) => t.file_field.endsWith("[]")));
 const candidates = computed(() =>
   props.tools.filter((tool) => exts.value.every((e) => tool.accepts.map((a) => a.toLowerCase()).includes(e))),
 );
@@ -29,7 +31,7 @@ async function run(tool: ToolDefinition) {
   chosen.value = tool;
   running.value = true;
   try {
-    results.value = await invoke<FileResult[]>("process_files", { toolId: tool.id, paths: props.files });
+    results.value = await invoke<FileResult[]>("process_files", { toolId: tool.id, paths: props.files, combine: combine.value && tool.file_field.endsWith("[]") });
   } catch (e) {
     results.value = props.files.map((f) => ({ input: f, output: null, error: String(e) }));
   } finally {
@@ -61,6 +63,10 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKey));
 
       <div v-if="!results && !running" class="qa-list">
         <p v-if="!candidates.length" class="qa-none">{{ t("noToolForFile") }}</p>
+        <label v-if="canCombine" class="qa-combine">
+          <button type="button" class="switch" :class="{ on: combine }" :aria-pressed="combine" @click="combine = !combine"></button>
+          <span>{{ t("combineIntoOne", { n: files.length }) }}</span>
+        </label>
         <button v-for="tool in candidates" :key="tool.id" class="qa-item" :style="{ '--acc': accent(tool) }" @click="run(tool)">
           <span class="qa-dot"></span>
           <span class="qa-txt">
@@ -113,6 +119,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKey));
 .qa-files { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 18px 12px; }
 .qa-list { overflow: auto; padding: 0 10px 12px; display: flex; flex-direction: column; gap: 4px; border-top: 1px solid var(--cardline); padding-top: 10px; }
 .qa-none { color: var(--muted); padding: 10px 8px; }
+.qa-combine { display: flex; align-items: center; gap: 10px; padding: 8px 10px 10px; font-size: 12.5px; color: var(--text2); cursor: pointer; }
 .qa-item { display: flex; align-items: center; gap: 12px; text-align: left; padding: 10px 10px; border: 1px solid transparent; border-radius: 11px; background: transparent; cursor: pointer; }
 .qa-item:hover { background: color-mix(in srgb, var(--acc) 8%, transparent); border-color: color-mix(in srgb, var(--acc) 30%, transparent); }
 .qa-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--acc); flex: none; }

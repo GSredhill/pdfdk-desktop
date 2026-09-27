@@ -310,7 +310,7 @@ async fn retry_job(app: AppHandle, state: tauri::State<'_, AppState>, job_id: St
     let result = match entry {
         Some(tc) => watcher::process_file_event(watcher::FileEvent { path: input.clone(), tool_id: tc.id.clone(), tool_config: tc }, token).await,
         None => {
-            let out = process_files(app.clone(), state.clone(), job.tool_id.clone(), vec![job.input_file.clone()]).await?;
+            let out = process_files(app.clone(), state.clone(), job.tool_id.clone(), vec![job.input_file.clone()], None).await?;
             match out.into_iter().next() {
                 Some(r) if r.output.is_some() => Ok(PathBuf::from(r.output.unwrap())),
                 Some(r) => Err(api::ApiError::ServerError(r.error.unwrap_or_default())),
@@ -518,7 +518,7 @@ struct FileResult {
 /// Run files the user dropped on the window / opened with the app through
 /// one tool. Output lands next to the source; the original stays put.
 #[tauri::command]
-async fn process_files(app: AppHandle, state: tauri::State<'_, AppState>, tool_id: String, paths: Vec<String>) -> Result<Vec<FileResult>, String> {
+async fn process_files(app: AppHandle, state: tauri::State<'_, AppState>, tool_id: String, paths: Vec<String>, combine: Option<bool>) -> Result<Vec<FileResult>, String> {
     let def = find_tool(&state, &tool_id).await.ok_or_else(|| format!("Unknown tool: {}", tool_id))?;
     let (tc, lang) = {
         let config = state.config.read().await;
@@ -539,6 +539,25 @@ async fn process_files(app: AppHandle, state: tauri::State<'_, AppState>, tool_i
     let label = tool_label(&tc, &lang);
     let token = state.auth.read().await.token.clone();
     let mut results = Vec::new();
+    // "Saml i én fil": tools with a files[] field take all dropped files in one request
+    let multi_tool = tc.file_field.as_deref().map(|f| f.ends_with("[]")).unwrap_or(false);
+    if combine.unwrap_or(false) && multi_tool && paths.len() > 1 {
+        let inputs: Vec<PathBuf> = paths.iter().map(PathBuf::from).collect();
+        let job_id = job_add(processor::Job::new(&tc.id, &label, &paths[0]));
+        job_update(&job_id, |j| j.set_processing());
+        let parent = inputs[0].parent().map(Path::to_path_buf).unwrap_or_else(|| PathBuf::from("."));
+        match watcher::run_tool_multi(&inputs, &tc, token.clone(), Some(&parent)).await {
+            Ok(out) => {
+                job_update(&job_id, |j| j.set_completed(&out.to_string_lossy()));
+                notify(&app, &state.config, &format!("{} · PDF.dk", label), &if lang == "en" { format!("{} files combined", paths.len()) } else { format!("{} filer samlet", paths.len()) });
+                return Ok(vec![FileResult { input: paths.join(", "), output: Some(out.to_string_lossy().to_string()), error: None }]);
+            }
+            Err(e) => {
+                job_update(&job_id, |j| j.set_failed(&e.to_string()));
+                return Ok(vec![FileResult { input: paths.join(", "), output: None, error: Some(e.to_string()) }]);
+            }
+        }
+    }
     for p in paths {
         let path = PathBuf::from(&p);
         let job_id = job_add(processor::Job::new(&tc.id, &label, &p));

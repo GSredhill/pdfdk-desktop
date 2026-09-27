@@ -269,6 +269,38 @@ pub async fn run_tool(
     Ok(output_path)
 }
 
+/// Several files → one result (tools with a "files[]" field, e.g. images → one PDF).
+/// The result lands next to the first file, named after it.
+pub async fn run_tool_multi(
+    inputs: &[PathBuf],
+    tool: &ToolConfig,
+    auth_token: Option<String>,
+    output_dir: Option<&Path>,
+) -> Result<PathBuf, crate::api::ApiError> {
+    let first = inputs.first().ok_or_else(|| crate::api::ApiError::ServerError("no files".into()))?;
+    let client = PdfDkClient::new(auth_token);
+    let endpoint_id = tool.endpoint.as_deref().map(|e| e.trim_start_matches("/api/")).unwrap_or(&tool.id).to_string();
+    let file_field = tool.file_field.clone().unwrap_or_else(|| "files[]".to_string());
+    let job_uuid = crate::api::with_retry("Upload", 3, || client.process_files_multi(inputs, &endpoint_id, &file_field, &tool.options)).await?;
+    let job = crate::api::with_retry("Status", 3, || client.poll_job(&job_uuid)).await?;
+    let server_name = job.output_filename.as_deref().map(Path::new);
+    let ext = server_name
+        .and_then(|n| n.extension().and_then(|e| e.to_str()).map(|s| s.to_string()))
+        .or_else(|| tool.output.clone())
+        .unwrap_or_else(|| "pdf".to_string());
+    let suffix = server_name
+        .and_then(|n| n.file_stem().and_then(|s| s.to_str()))
+        .and_then(|stem| stem.rsplit_once('_').map(|(_, sfx)| sfx.to_string()))
+        .filter(|s| !s.is_empty() && s.len() <= 40)
+        .unwrap_or_else(|| tool.id.clone());
+    let output_path = get_output_path(first, tool, &suffix, &ext, output_dir);
+    if let Ok(mut set) = produced_outputs().lock() {
+        set.insert(output_path.clone());
+    }
+    crate::api::with_retry("Download", 3, || client.download_result(&job_uuid, &output_path)).await?;
+    Ok(output_path)
+}
+
 async fn move_to_originals(file_path: &Path) -> Result<(), std::io::Error> {
     let parent = file_path.parent().unwrap_or(Path::new("."));
     let originals_folder = parent.join("Originals");

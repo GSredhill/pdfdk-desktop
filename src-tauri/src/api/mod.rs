@@ -4,7 +4,7 @@
 use crate::config::{CatalogCache, ToolDefinition};
 use reqwest::{multipart, Client};
 use serde::{Deserialize, Serialize};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 use thiserror::Error;
 use tokio::fs;
@@ -301,6 +301,11 @@ impl PdfDkClient {
             .multipart(form)
             .send()
             .await?;
+        self.job_uuid_from(response).await
+    }
+
+    /// Status handling shared by the single- and multi-file uploads.
+    async fn job_uuid_from(&self, response: reqwest::Response) -> Result<String, ApiError> {
         let status = response.status();
 
         if status == reqwest::StatusCode::UNAUTHORIZED {
@@ -338,6 +343,46 @@ impl PdfDkClient {
             .data
             .map(|d| d.job_uuid)
             .ok_or(ApiError::ServerError("No job UUID returned from server".to_string()))
+    }
+
+    /// Several files in ONE request (tools whose field is "files[]"): the server combines
+    /// them, e.g. images → one PDF, in the order given.
+    pub async fn process_files_multi(
+        &self,
+        file_paths: &[PathBuf],
+        endpoint_id: &str,
+        file_field: &str,
+        options: &serde_json::Value,
+    ) -> Result<String, ApiError> {
+        let mut form = multipart::Form::new();
+        for file_path in file_paths {
+            let file_name = file_path.file_name().and_then(|n| n.to_str()).unwrap_or("file").to_string();
+            let len = fs::metadata(file_path).await?.len();
+            let file = fs::File::open(file_path).await?;
+            let stream = tokio_util::io::ReaderStream::new(file);
+            form = form.part(
+                file_field.to_string(),
+                multipart::Part::stream_with_length(reqwest::Body::wrap_stream(stream), len)
+                    .file_name(file_name)
+                    .mime_str(mime_for(file_path))
+                    .unwrap(),
+            );
+        }
+        if let Some(obj) = options.as_object() {
+            for (key, value) in obj {
+                let text = match value {
+                    serde_json::Value::String(s) => s.clone(),
+                    serde_json::Value::Bool(b) => if *b { "1".into() } else { "0".into() },
+                    serde_json::Value::Null => continue,
+                    other => other.to_string(),
+                };
+                form = form.text(key.clone(), text);
+            }
+        }
+        let url = format!("{}/{}", api_base(), endpoint_id);
+        info!("Uploading {} files to /{}", file_paths.len(), endpoint_id);
+        let response = self.with_auth(self.client.post(&url)).timeout(Duration::from_secs(3600)).multipart(form).send().await?;
+        self.job_uuid_from(response).await
     }
 
     /// Poll job status until completion

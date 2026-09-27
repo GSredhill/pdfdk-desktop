@@ -80,6 +80,7 @@ const strings: Record<string, { da: string; en: string }> = {
   quickSub: { da: "{n} filer · resultatet gemmes ved siden af originalen", en: "{n} files · the result is saved next to the original" },
   run: { da: "Kør", en: "Run" },
   running: { da: "Kører…", en: "Running…" },
+  combineIntoOne: { da: "Saml alle {n} filer i én PDF (kun værktøjer der tager flere filer)", en: "Combine all {n} files into one PDF (tools that take several files)" },
   noToolForFile: { da: "Intet værktøj tager denne filtype", en: "No tool takes this file type" },
   done: { da: "Færdig", en: "Done" },
   failed: { da: "Fejlede", en: "Failed" },
