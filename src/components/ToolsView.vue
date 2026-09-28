@@ -243,9 +243,9 @@ async function disable(tool: ToolDefinition, entry: ToolConfig) {
           <div class="tc-actions">
             <button v-if="isEnabled(tool.id)" class="btn btn-sm btn-ghost" @click="chooseFolder(tool)">+ {{ t("addFolder") }}</button>
             <button v-else class="btn btn-sm btn-primary" @click="chooseFolder(tool)">{{ t("enable") }}</button>
-            <button class="btn btn-sm btn-ghost tc-widget" :title="t('widgetCreate')" @click="createWidget(tool)">
+            <button class="btn btn-sm btn-ghost tc-widget" :title="t('widgetCreate')" :aria-label="t('widgetCreate')" @click="createWidget(tool)">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="8" height="8" rx="2"/><rect x="13" y="3" width="8" height="8" rx="2"/><rect x="3" y="13" width="8" height="8" rx="2"/><path d="M17 14v6M14 17h6"/></svg>
-              {{ t("widgetCreate") }}
+              {{ t("widgetShort") }}
             </button>
             <a class="tc-web" href="#" :title="siteBase + bi(tool.web_path)" @click.prevent="openUrl(siteBase + bi(tool.web_path))">pdf.dk ↗</a>
           </div>
@@ -325,7 +325,8 @@ async function disable(tool: ToolDefinition, entry: ToolConfig) {
 .tc-ib:hover { background: var(--card); color: var(--text); }
 .tc-ib-danger:hover { color: var(--bad); }
 .tv-err { margin-top: 10px; background: var(--badSoft); color: var(--bad); border-radius: 9px; padding: 9px 11px; font-size: 12.5px; }
-.tc-actions { display: flex; align-items: center; gap: 8px; margin-top: auto; }
-.tc-web { margin-left: auto; font-size: 11.5px; color: var(--faint); }
+.tc-actions { display: flex; align-items: center; gap: 6px; margin-top: auto; }
+.tc-actions .btn { white-space: nowrap; flex: none; }
+.tc-web { margin-left: auto; font-size: 11.5px; color: var(--faint); white-space: nowrap; }
 .tc-web:hover { color: var(--brand); }
 </style>
