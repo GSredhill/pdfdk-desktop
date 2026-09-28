@@ -52,6 +52,16 @@ export interface ToolConfig {
   name?: Bilingual | null;
 }
 
+/** a desktop widget: one tool with its own options, sitting on the desktop (0.4.0) */
+export interface WidgetConfig {
+  id: string;
+  toolId: string;
+  options: Record<string, unknown>;
+  combine: boolean;
+  x: number | null;
+  y: number | null;
+}
+
 export interface AppConfig {
   version: number;
   general: {
@@ -62,6 +72,7 @@ export interface AppConfig {
     theme: string;
   };
   tools: ToolConfig[];
+  widgets?: WidgetConfig[];
   auth?: unknown;
 }
 

@@ -7,6 +7,7 @@ mod auth;
 mod config;
 mod processor;
 mod watcher;
+mod widgets;
 
 use config::{AppConfig, ToolConfig, ToolDefinition};
 use once_cell::sync::Lazy;
@@ -422,7 +423,7 @@ async fn get_available_tools(state: tauri::State<'_, AppState>, refresh: Option<
     Ok(tools)
 }
 
-async fn find_tool(state: &AppState, tool_id: &str) -> Option<ToolDefinition> {
+pub(crate) async fn find_tool(state: &AppState, tool_id: &str) -> Option<ToolDefinition> {
     let cat = state.catalog.read().await;
     cat.iter().find(|t| t.id == tool_id).cloned()
 }
@@ -474,7 +475,10 @@ async fn disable_tool(state: tauri::State<'_, AppState>, key: String) -> Result<
 /// `key` = one watched folder's options; without it the tool's first entry
 /// (also what drag-and-drop / Open with use), created disabled if needed.
 #[tauri::command]
-async fn update_tool_options(state: tauri::State<'_, AppState>, tool_id: String, options: serde_json::Value, key: Option<String>) -> Result<(), String> {
+async fn update_tool_options(app: AppHandle, state: tauri::State<'_, AppState>, tool_id: String, options: serde_json::Value, key: Option<String>) -> Result<(), String> {
+    if let Some(id) = key.as_deref().and_then(|k| k.strip_prefix("widget:")) {
+        return widgets::widget_update(app, state, id.to_string(), options, None).await;
+    }
     let mut config = state.config.write().await;
     let found = match key.as_deref() {
         Some(k) => config.tools.iter_mut().find(|t| t.key == k),
@@ -520,10 +524,56 @@ async fn start_watchers(app: AppHandle, state: tauri::State<'_, AppState>) -> Re
 
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
-struct FileResult {
-    input: String,
-    output: Option<String>,
-    error: Option<String>,
+pub struct FileResult {
+    pub input: String,
+    pub output: Option<String>,
+    pub error: Option<String>,
+}
+
+/// Run files through one tool config: jobs are tracked (Aktivitet), the user is notified,
+/// output lands next to each input. Shared by the drop zone, Open with and the widgets.
+pub(crate) async fn run_files(app: &AppHandle, state: &AppState, tc: ToolConfig, lang: &str, paths: Vec<String>, combine: bool) -> Vec<FileResult> {
+    let label = tool_label(&tc, lang);
+    let token = state.auth.read().await.token.clone();
+    let mut results = Vec::new();
+    // "Saml i én fil": tools with a files[] field take all dropped files in one request
+    let multi_tool = tc.file_field.as_deref().map(|f| f.ends_with("[]")).unwrap_or(false);
+    if combine && multi_tool && paths.len() > 1 {
+        let inputs: Vec<PathBuf> = paths.iter().map(PathBuf::from).collect();
+        let job_id = job_add(processor::Job::new(&tc.id, &label, &paths[0]));
+        job_update(&job_id, |j| j.set_processing());
+        let parent = inputs[0].parent().map(Path::to_path_buf).unwrap_or_else(|| PathBuf::from("."));
+        return match watcher::run_tool_multi(&inputs, &tc, token.clone(), Some(&parent)).await {
+            Ok(out) => {
+                job_update(&job_id, |j| j.set_completed(&out.to_string_lossy()));
+                notify(app, &state.config, &format!("{} · PDF.dk", label), &if lang == "en" { format!("{} files combined", paths.len()) } else { format!("{} filer samlet", paths.len()) });
+                vec![FileResult { input: paths.join(", "), output: Some(out.to_string_lossy().to_string()), error: None }]
+            }
+            Err(e) => {
+                job_update(&job_id, |j| j.set_failed(&e.to_string()));
+                vec![FileResult { input: paths.join(", "), output: None, error: Some(e.to_string()) }]
+            }
+        };
+    }
+    for p in paths {
+        let path = PathBuf::from(&p);
+        let job_id = job_add(processor::Job::new(&tc.id, &label, &p));
+        job_update(&job_id, |j| j.set_processing());
+        let parent = path.parent().map(Path::to_path_buf).unwrap_or_else(|| PathBuf::from("."));
+        match watcher::run_tool(&path, &tc, token.clone(), Some(&parent)).await {
+            Ok(out) => {
+                job_update(&job_id, |j| j.set_completed(&out.to_string_lossy()));
+                results.push(FileResult { input: p, output: Some(out.to_string_lossy().to_string()), error: None });
+            }
+            Err(e) => {
+                job_update(&job_id, |j| j.set_failed(&e.to_string()));
+                results.push(FileResult { input: p, output: None, error: Some(e.to_string()) });
+            }
+        }
+    }
+    let ok = results.iter().filter(|r| r.output.is_some()).count();
+    notify(app, &state.config, &format!("{} · PDF.dk", label), &if lang == "en" { format!("{} of {} files done", ok, results.len()) } else { format!("{} af {} filer færdige", ok, results.len()) });
+    results
 }
 
 /// Run files the user dropped on the window / opened with the app through
@@ -547,47 +597,7 @@ async fn process_files(app: AppHandle, state: tauri::State<'_, AppState>, tool_i
             accepts: def.accepts.clone(), output: Some(def.output.clone()), name: Some(def.name.clone()),
         }, config.general.language.clone())
     };
-    let label = tool_label(&tc, &lang);
-    let token = state.auth.read().await.token.clone();
-    let mut results = Vec::new();
-    // "Saml i én fil": tools with a files[] field take all dropped files in one request
-    let multi_tool = tc.file_field.as_deref().map(|f| f.ends_with("[]")).unwrap_or(false);
-    if combine.unwrap_or(false) && multi_tool && paths.len() > 1 {
-        let inputs: Vec<PathBuf> = paths.iter().map(PathBuf::from).collect();
-        let job_id = job_add(processor::Job::new(&tc.id, &label, &paths[0]));
-        job_update(&job_id, |j| j.set_processing());
-        let parent = inputs[0].parent().map(Path::to_path_buf).unwrap_or_else(|| PathBuf::from("."));
-        match watcher::run_tool_multi(&inputs, &tc, token.clone(), Some(&parent)).await {
-            Ok(out) => {
-                job_update(&job_id, |j| j.set_completed(&out.to_string_lossy()));
-                notify(&app, &state.config, &format!("{} · PDF.dk", label), &if lang == "en" { format!("{} files combined", paths.len()) } else { format!("{} filer samlet", paths.len()) });
-                return Ok(vec![FileResult { input: paths.join(", "), output: Some(out.to_string_lossy().to_string()), error: None }]);
-            }
-            Err(e) => {
-                job_update(&job_id, |j| j.set_failed(&e.to_string()));
-                return Ok(vec![FileResult { input: paths.join(", "), output: None, error: Some(e.to_string()) }]);
-            }
-        }
-    }
-    for p in paths {
-        let path = PathBuf::from(&p);
-        let job_id = job_add(processor::Job::new(&tc.id, &label, &p));
-        job_update(&job_id, |j| j.set_processing());
-        let parent = path.parent().map(Path::to_path_buf).unwrap_or_else(|| PathBuf::from("."));
-        match watcher::run_tool(&path, &tc, token.clone(), Some(&parent)).await {
-            Ok(out) => {
-                job_update(&job_id, |j| j.set_completed(&out.to_string_lossy()));
-                results.push(FileResult { input: p, output: Some(out.to_string_lossy().to_string()), error: None });
-            }
-            Err(e) => {
-                job_update(&job_id, |j| j.set_failed(&e.to_string()));
-                results.push(FileResult { input: p, output: None, error: Some(e.to_string()) });
-            }
-        }
-    }
-    let ok = results.iter().filter(|r| r.output.is_some()).count();
-    notify(&app, &state.config, &format!("{} · PDF.dk", label), &if lang == "en" { format!("{} of {} files done", ok, results.len()) } else { format!("{} af {} filer færdige", ok, results.len()) });
-    Ok(results)
+    Ok(run_files(&app, &state, tc, &lang, paths, combine.unwrap_or(false)).await)
 }
 
 #[tauri::command]
@@ -648,7 +658,7 @@ fn setup_tray<R: Runtime>(app: &tauri::App<R>) -> Result<(), Box<dyn std::error:
     Ok(())
 }
 
-fn show_main<R: Runtime>(app: &AppHandle<R>) {
+pub(crate) fn show_main<R: Runtime>(app: &AppHandle<R>) {
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.show();
         let _ = window.unminimize();
@@ -689,6 +699,7 @@ pub fn run() {
         }))
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_drag::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
@@ -740,6 +751,17 @@ pub fn run() {
                 });
             }
 
+            // saved desktop widgets come back with the app
+            {
+                let handle = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    if let Some(state) = handle.try_state::<AppState>() {
+                        widgets::open_all(&handle, &state).await;
+                    }
+                });
+                widgets::start_test_hook(app.handle());
+            }
+
             info!("PDF.dk Desktop started");
             Ok(())
         })
@@ -768,6 +790,14 @@ pub fn run() {
             retry_job,
             get_logs,
             clear_logs,
+            widgets::widget_list,
+            widgets::widget_get,
+            widgets::widget_create,
+            widgets::widget_remove,
+            widgets::widget_show,
+            widgets::widget_update,
+            widgets::widget_process,
+            widgets::widget_show_main,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

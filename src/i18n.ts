@@ -119,6 +119,29 @@ const strings: Record<string, { da: string; en: string }> = {
   upToDate: { da: "Du har den nyeste version", en: "You have the latest version" },
   updateFailed: { da: "Opdatering fejlede", en: "Update failed" },
   downloadManually: { da: "hent manuelt", en: "download manually" },
+
+  // desktop widgets (0.4.0)
+  widgets: { da: "Skrivebordswidgets", en: "Desktop widgets" },
+  widgetsDesc: { da: "Små felter på skrivebordet: slip filer på dem, og træk resultatet direkte videre til en mail eller en mappe.", en: "Small tiles on the desktop: drop files on them and drag the result straight on into an e-mail or a folder." },
+  widgetCreate: { da: "Sæt på skrivebordet", en: "Put on the desktop" },
+  widgetCreated: { da: "Widget lagt på skrivebordet", en: "Widget placed on the desktop" },
+  widgetShow: { da: "Vis", en: "Show" },
+  widgetOptions: { da: "Indstillinger for denne widget", en: "Options for this widget" },
+  widgetRemove: { da: "Fjern fra skrivebordet", en: "Remove from the desktop" },
+  widgetCombine: { da: "Saml alle filer i én PDF", en: "Combine all files into one PDF" },
+  widgetNone: { da: "Ingen widgets endnu. Tryk »Sæt på skrivebordet« på et værktøj.", en: "No widgets yet. Press \"Put on the desktop\" on a tool." },
+  widgetDrop: { da: "Slip filer her", en: "Drop files here" },
+  widgetRunning: { da: "Behandler {n} fil(er)…", en: "Processing {n} file(s)…" },
+  widgetDragOut: { da: "Træk filen videre", en: "Drag the file onwards" },
+  widgetDragHint: { da: "Træk til en mail eller mappe · klik: vis i Finder", en: "Drag into an e-mail or folder · click: reveal" },
+  widgetClear: { da: "Ryd", en: "Clear" },
+  widgetFailed: { da: "Fejlede – se Aktivitet i appen", en: "Failed – see Activity in the app" },
+  widgetOnly: { da: "Kun {ext}", en: "Only {ext}" },
+  widgetSkipped: { da: "{n} fil(er) sprunget over", en: "{n} file(s) skipped" },
+  widgetDragFailed: { da: "Kunne ikke starte træk – filen ligger ved originalen", en: "Could not start the drag – the file is next to the original" },
+  widgetSignIn: { da: "Log ind i PDF.dk Desktop for at bruge widgetten", en: "Sign in to PDF.dk Desktop to use the widget" },
+  widgetNeedsPro: { da: "Widgets kræver PDF.dk Pro", en: "Widgets need PDF.dk Pro" },
+  widgetOpenApp: { da: "Åbn appen", en: "Open the app" },
 };
 
 export function t(key: string, vars?: Record<string, string | number>): string {

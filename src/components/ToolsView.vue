@@ -4,7 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { t, bi } from "../i18n";
-import { CATEGORY_ORDER, CATEGORY_VAR, type AppConfig, type ToolConfig, type ToolDefinition } from "../types";
+import { CATEGORY_ORDER, CATEGORY_VAR, type AppConfig, type ToolConfig, type ToolDefinition, type WidgetConfig } from "../types";
 import OptionsModal from "./OptionsModal.vue";
 
 const props = defineProps<{ tools: ToolDefinition[]; config: AppConfig | null; loading: boolean; siteBase: string }>();
@@ -12,7 +12,36 @@ const emit = defineEmits<{ (e: "reload"): void; (e: "config-changed"): void }>()
 
 const query = ref("");
 const onlyEnabled = ref(false);
-const optionsFor = ref<{ tool: ToolDefinition; entry: ToolConfig | null } | null>(null);
+const optionsFor = ref<{ tool: ToolDefinition; entry: ToolConfig | null; widget?: WidgetConfig } | null>(null);
+const widgetNotice = ref("");
+
+// ---- desktop widgets (0.4.0)
+const widgets = computed(() => props.config?.widgets ?? []);
+function widgetTool(w: WidgetConfig): ToolDefinition | undefined {
+  return props.tools.find((x) => x.id === w.toolId);
+}
+async function createWidget(tool: ToolDefinition) {
+  error.value = "";
+  try {
+    await invoke("widget_create", { toolId: tool.id });
+    emit("config-changed");
+    widgetNotice.value = t("widgetCreated");
+    setTimeout(() => (widgetNotice.value = ""), 2500);
+  } catch (e) {
+    error.value = String(e);
+  }
+}
+async function removeWidget(w: WidgetConfig) {
+  await invoke("widget_remove", { id: w.id }).catch((e) => (error.value = String(e)));
+  emit("config-changed");
+}
+async function showWidget(w: WidgetConfig) {
+  await invoke("widget_show", { id: w.id }).catch((e) => (error.value = String(e)));
+}
+async function setWidgetCombine(w: WidgetConfig, combine: boolean) {
+  await invoke("widget_update", { id: w.id, options: w.options, combine }).catch((e) => (error.value = String(e)));
+  emit("config-changed");
+}
 const busyTool = ref("");
 const error = ref("");
 
@@ -143,6 +172,29 @@ async function disable(tool: ToolDefinition, entry: ToolConfig) {
       <button class="btn" @click="emit('reload')">{{ t("refreshTools") }}</button>
     </div>
 
+    <section v-if="widgets.length" class="tv-group tv-widgets">
+      <h3 class="tv-cat"><span class="tv-cat-dot" style="background: var(--brand);"></span>{{ t("widgets") }}</h3>
+      <p class="tv-p tv-widgets-p">{{ t("widgetsDesc") }}</p>
+      <div class="tv-wgrid">
+        <div v-for="w in widgets" :key="w.id" class="tw card" :style="{ '--acc': `var(${CATEGORY_VAR[widgetTool(w)?.category || ''] || '--brand'})` }">
+          <div class="tw-head">
+            <span class="tw-dot"></span>
+            <span class="tw-name">{{ widgetTool(w) ? bi(widgetTool(w)!.name) : w.toolId }}</span>
+          </div>
+          <div v-if="widgetTool(w) && optionSummary(widgetTool(w)!, w.options)" class="tc-folder-opts">{{ optionSummary(widgetTool(w)!, w.options) }}</div>
+          <label v-if="widgetTool(w)?.file_field.endsWith('[]')" class="tw-combine">
+            <input type="checkbox" :checked="w.combine" @change="setWidgetCombine(w, ($event.target as HTMLInputElement).checked)" />
+            <span>{{ t("widgetCombine") }}</span>
+          </label>
+          <div class="tw-actions">
+            <button class="btn btn-sm btn-ghost" @click="showWidget(w)">{{ t("widgetShow") }}</button>
+            <button v-if="widgetTool(w) && visibleOptions(widgetTool(w)!).length" class="btn btn-sm btn-ghost" @click="optionsFor = { tool: widgetTool(w)!, entry: null, widget: w }">{{ t("options") }}</button>
+            <button class="btn btn-sm btn-ghost tw-remove" @click="removeWidget(w)">{{ t("removeFolder") }}</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
     <section v-for="g in groups" :key="g.cat" class="tv-group" :style="{ '--acc': g.accent }">
       <h3 class="tv-cat"><span class="tv-cat-dot"></span>{{ g.label }}</h3>
       <div class="tv-grid">
@@ -191,17 +243,23 @@ async function disable(tool: ToolDefinition, entry: ToolConfig) {
           <div class="tc-actions">
             <button v-if="isEnabled(tool.id)" class="btn btn-sm btn-ghost" @click="chooseFolder(tool)">+ {{ t("addFolder") }}</button>
             <button v-else class="btn btn-sm btn-primary" @click="chooseFolder(tool)">{{ t("enable") }}</button>
+            <button class="btn btn-sm btn-ghost tc-widget" :title="t('widgetCreate')" @click="createWidget(tool)">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="8" height="8" rx="2"/><rect x="13" y="3" width="8" height="8" rx="2"/><rect x="3" y="13" width="8" height="8" rx="2"/><path d="M17 14v6M14 17h6"/></svg>
+              {{ t("widgetCreate") }}
+            </button>
             <a class="tc-web" href="#" :title="siteBase + bi(tool.web_path)" @click.prevent="openUrl(siteBase + bi(tool.web_path))">pdf.dk ↗</a>
           </div>
         </article>
       </div>
     </section>
 
+    <transition name="tv-toast"><div v-if="widgetNotice" class="tv-toast">{{ widgetNotice }}</div></transition>
+
     <OptionsModal
       v-if="optionsFor"
       :tool="optionsFor.tool"
-      :values="optionsFor.entry?.options || defaultOptions(optionsFor.tool.id)"
-      :entry-key="optionsFor.entry?.key ?? null"
+      :values="optionsFor.widget?.options || optionsFor.entry?.options || defaultOptions(optionsFor.tool.id)"
+      :entry-key="optionsFor.widget ? 'widget:' + optionsFor.widget.id : (optionsFor.entry?.key ?? null)"
       @close="optionsFor = null"
       @saved="optionsFor = null; emit('config-changed')"
     />
@@ -210,6 +268,20 @@ async function disable(tool: ToolDefinition, entry: ToolConfig) {
 
 <style scoped>
 .tv { padding: 22px 24px 40px; max-width: 1180px; margin: 0 auto; }
+.tv-widgets-p { margin-bottom: 10px; }
+.tv-wgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; }
+.tw { padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; border-color: color-mix(in srgb, var(--acc) 40%, var(--cardline)); }
+.tw-head { display: flex; align-items: center; gap: 8px; }
+.tw-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--acc); }
+.tw-name { font-weight: 800; font-size: 13.5px; }
+.tw-combine { display: flex; align-items: center; gap: 7px; font-size: 12px; color: var(--muted); cursor: pointer; }
+.tw-actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 2px; }
+.tw-remove { color: var(--bad); }
+.tc-widget { display: inline-flex; align-items: center; gap: 5px; }
+.tc-widget svg { width: 14px; height: 14px; }
+.tv-toast { position: fixed; left: 50%; bottom: 26px; transform: translateX(-50%); padding: 9px 14px; border-radius: 10px; background: var(--text); color: var(--bg); font-size: 12.5px; font-weight: 700; box-shadow: var(--shadow); z-index: 40; }
+.tv-toast-enter-active, .tv-toast-leave-active { transition: opacity .18s, transform .18s; }
+.tv-toast-enter-from, .tv-toast-leave-to { opacity: 0; transform: translate(-50%, 6px); }
 .tv-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; margin-bottom: 8px; }
 .tv-h { font-size: 20px; }
 .tv-p { margin: 4px 0 0; color: var(--muted); max-width: 620px; }

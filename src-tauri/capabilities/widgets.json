@@ -1,0 +1,18 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "widgets",
+  "description": "Desktop widget windows: drop in, drag out, move, reveal",
+  "windows": [
+    "widget-*"
+  ],
+  "permissions": [
+    "core:default",
+    "core:event:default",
+    "core:webview:default",
+    "core:window:default",
+    "core:window:allow-start-dragging",
+    "core:window:allow-close",
+    "opener:allow-reveal-item-in-dir",
+    "drag:default"
+  ]
+}

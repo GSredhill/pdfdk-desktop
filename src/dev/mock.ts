@@ -6,6 +6,7 @@ import fixture from "./tools.fixture.json";
 type Handler = (args: any) => any;
 
 const config = {
+  widgets: [{ id: "w1", toolId: "compress", options: { quality: "high" }, combine: false, x: 40, y: 80 }] as any[],
   version: 2,
   general: { startOnLogin: true, startMinimized: true, showNotifications: true, language: "da", theme: "system" },
   tools: [
@@ -38,6 +39,15 @@ const handlers: Record<string, Handler> = {
   "plugin:opener|reveal_item_in_dir": () => null,
   "plugin:dialog|open": () => "/Users/demo/PDF.dk/Ny mappe",
   get_config: () => config,
+  widget_list: () => config.widgets,
+  widget_get: ({ id }) => { const w = config.widgets.find((x: any) => x.id === id) || config.widgets[0]; return { widget: w, tool: fixture.data.tools.find((t: any) => t.id === w.toolId) || fixture.data.tools[0], language: "da", theme: "system" }; },
+  widget_create: ({ toolId }) => { const w = { id: Math.random().toString(36).slice(2, 10), toolId, options: {}, combine: true, x: null, y: null }; config.widgets.push(w); return w; },
+  widget_remove: ({ id }) => { config.widgets = config.widgets.filter((x: any) => x.id !== id); return null; },
+  widget_show: () => null,
+  widget_update: ({ id, options, combine }) => { const w = config.widgets.find((x: any) => x.id === id); if (w) { w.options = options; if (combine != null) w.combine = combine; } return null; },
+  widget_process: async ({ paths }) => { await new Promise((r) => setTimeout(r, 1500)); return paths.map((p: string) => ({ input: p, output: p.replace(/(\.[^.]+)$/, "_compressed$1"), error: null })); },
+  widget_show_main: () => null,
+  "plugin:drag|start_drag": () => null,
   save_config: ({ newConfig }) => { Object.assign(config, newConfig); return null; },
   get_site_base: () => "https://dev.pdf.dk",
   check_auth: auth,

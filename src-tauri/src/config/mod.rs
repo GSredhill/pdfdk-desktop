@@ -40,6 +40,9 @@ pub struct AppConfig {
     pub version: u32,
     pub general: GeneralSettings,
     pub tools: Vec<ToolConfig>,
+    /// desktop widgets (0.4.0); missing in older configs
+    #[serde(default)]
+    pub widgets: Vec<WidgetConfig>,
     #[serde(default)]
     pub auth: Option<AuthConfig>,
 }
@@ -97,6 +100,24 @@ impl ToolConfig {
         }
         self.accepts.iter().any(|a| a.eq_ignore_ascii_case(ext))
     }
+}
+
+/// A desktop widget (0.4.0): one tool with its own options, sitting on the desktop as a
+/// small drop target. Position is logical pixels; None = let the OS place it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WidgetConfig {
+    pub id: String,
+    pub tool_id: String,
+    #[serde(default)]
+    pub options: serde_json::Value,
+    /// several dropped files → one result (tools with a files[] field)
+    #[serde(default)]
+    pub combine: bool,
+    #[serde(default)]
+    pub x: Option<f64>,
+    #[serde(default)]
+    pub y: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -254,6 +275,7 @@ impl Default for AppConfig {
                 theme: "system".to_string(),
             },
             tools: vec![],
+            widgets: Vec::new(),
             auth: None,
         }
     }
