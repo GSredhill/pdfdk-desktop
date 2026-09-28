@@ -46,6 +46,8 @@ pub enum ApiError {
     Unauthorized,
     #[error("Monthly job limit exceeded")]
     JobLimitExceeded,
+    #[error("The server asked for a pause ({0} s) — retrying")]
+    RateLimited(u64),
     #[error("File too large for your plan (max {0} MB)")]
     FileTooLarge(i32),
 }
@@ -60,9 +62,25 @@ impl ApiError {
                 let m = msg.to_ascii_lowercase();
                 m.contains("502") || m.contains("503") || m.contains("504") || m.contains("gateway") || m.contains("timeout")
             }
+            // 429 from the API rate limiter: wait what Retry-After says, then go on (0.3.4)
+            ApiError::RateLimited(_) => true,
             _ => false,
         }
     }
+}
+
+/// Seconds the server asked us to wait (Retry-After), clamped to 5–120 s. None = not rate limited.
+fn retry_after(response: &reqwest::Response) -> Option<u64> {
+    if response.status() != reqwest::StatusCode::TOO_MANY_REQUESTS {
+        return None;
+    }
+    let secs = response
+        .headers()
+        .get(reqwest::header::RETRY_AFTER)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .unwrap_or(30);
+    Some(secs.clamp(5, 120))
 }
 
 /// Run `op` up to `attempts` times with backoff (2 s, 5 s, 10 s) while the error is transient.
@@ -77,7 +95,10 @@ where
         match op().await {
             Ok(v) => return Ok(v),
             Err(e) if e.is_transient() && n + 1 < attempts => {
-                let wait = waits[(n as usize).min(waits.len() - 1)];
+                let wait = match e {
+                    ApiError::RateLimited(secs) => secs + 1,
+                    _ => waits[(n as usize).min(waits.len() - 1)],
+                };
                 crate::add_log(&format!("{} failed ({}), retrying in {} s ({}/{})", what, e, wait, n + 1, attempts - 1));
                 tokio::time::sleep(Duration::from_secs(wait)).await;
                 n += 1;
@@ -312,7 +333,10 @@ impl PdfDkClient {
             return Err(ApiError::Unauthorized);
         }
         if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
-            return Err(ApiError::JobLimitExceeded);
+            return Err(match retry_after(&response) {
+                Some(secs) => ApiError::RateLimited(secs),
+                None => ApiError::JobLimitExceeded,
+            });
         }
         if status == reqwest::StatusCode::PAYLOAD_TOO_LARGE {
             return Err(ApiError::FileTooLarge(100));
@@ -400,6 +424,9 @@ impl PdfDkClient {
             if response.status() == reqwest::StatusCode::UNAUTHORIZED {
                 return Err(ApiError::Unauthorized);
             }
+            if let Some(secs) = retry_after(&response) {
+                return Err(ApiError::RateLimited(secs));
+            }
             let body = response.text().await.unwrap_or_default();
 
             let job_response: JobStatusResponse = serde_json::from_str(&body)
@@ -447,6 +474,9 @@ impl PdfDkClient {
 
         if response.status() == reqwest::StatusCode::UNAUTHORIZED {
             return Err(ApiError::Unauthorized);
+        }
+        if let Some(secs) = retry_after(&response) {
+            return Err(ApiError::RateLimited(secs));
         }
         if !response.status().is_success() {
             let body = response.text().await.unwrap_or_default();

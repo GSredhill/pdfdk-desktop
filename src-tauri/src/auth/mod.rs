@@ -199,6 +199,23 @@ pub async fn validate_token(token: &str) -> Result<AuthState, AuthError> {
     Ok(state)
 }
 
+/// POST /api/auth/logout — revoke the desktop token on the server so it stops working
+/// everywhere, not only on this machine (0.3.4). Best effort: offline logout still succeeds.
+pub async fn revoke_token(token: &str) -> Result<(), AuthError> {
+    let client = Client::new();
+    let response = client
+        .post(format!("{}/auth/logout", api_base()))
+        .header("Authorization", format!("Bearer {}", token))
+        .header("Accept", "application/json")
+        .send()
+        .await?;
+    if response.status().is_success() || response.status() == reqwest::StatusCode::UNAUTHORIZED {
+        Ok(())
+    } else {
+        Err(AuthError::ServerError(format!("Server returned {}", response.status())))
+    }
+}
+
 pub fn save_token(token: &str) -> Result<(), AuthError> {
     let mut cfg = config::load_config().map_err(|e| AuthError::Keyring(e.to_string()))?;
     if cfg.auth.is_none() {
@@ -227,25 +244,33 @@ pub fn clear_token() -> Result<(), AuthError> {
     Ok(())
 }
 
-pub fn save_credentials(email: &str, password: &str) -> Result<(), AuthError> {
+/// "Remember me" keeps the e-mail only. Up to 0.3.3 the password went into the config file in
+/// plain text; 0.3.4 never writes it and wipes any stored one on load (see `load_credentials`).
+pub fn save_credentials(email: &str, _password: &str) -> Result<(), AuthError> {
     let mut cfg = config::load_config().map_err(|e| AuthError::Keyring(e.to_string()))?;
     if cfg.auth.is_none() {
         cfg.auth = Some(AuthConfig::default());
     }
     if let Some(ref mut auth) = cfg.auth {
         auth.email = Some(email.to_string());
-        auth.password = Some(password.to_string());
+        auth.password = None;
     }
     config::save_config(&cfg).map_err(|e| AuthError::Keyring(e.to_string()))?;
     Ok(())
 }
 
 pub fn load_credentials() -> Result<(String, String), AuthError> {
-    let cfg = config::load_config().map_err(|e| AuthError::Keyring(e.to_string()))?;
+    let mut cfg = config::load_config().map_err(|e| AuthError::Keyring(e.to_string()))?;
+    // one-time cleanup of a password saved by 0.3.3 or older
+    if cfg.auth.as_ref().and_then(|a| a.password.as_ref()).is_some() {
+        if let Some(ref mut auth) = cfg.auth {
+            auth.password = None;
+        }
+        let _ = config::save_config(&cfg);
+    }
     let auth = cfg.auth.ok_or_else(|| AuthError::Keyring("No saved credentials".to_string()))?;
     let email = auth.email.ok_or_else(|| AuthError::Keyring("No saved email".to_string()))?;
-    let password = auth.password.ok_or_else(|| AuthError::Keyring("No saved password".to_string()))?;
-    Ok((email, password))
+    Ok((email, String::new()))
 }
 
 pub fn clear_credentials() -> Result<(), AuthError> {

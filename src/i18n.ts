@@ -14,7 +14,7 @@ const strings: Record<string, { da: string; en: string }> = {
   signInSub: { da: "Samme konto som på pdf.dk", en: "The same account as on pdf.dk" },
   email: { da: "E-mail", en: "Email" },
   password: { da: "Adgangskode", en: "Password" },
-  rememberMe: { da: "Husk mig på denne computer", en: "Remember me on this computer" },
+  rememberMe: { da: "Husk min e-mail på denne computer", en: "Remember my e-mail on this computer" },
   signIn: { da: "Log ind", en: "Sign in" },
   browserLogin: { da: "Log ind via browser", en: "Sign in with your browser" },
   browserLoginSub: { da: "Google, Microsoft eller e-mail — som på pdf.dk", en: "Google, Microsoft or e-mail — same as on pdf.dk" },

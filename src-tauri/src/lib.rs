@@ -356,9 +356,20 @@ async fn get_saved_credentials() -> Result<Option<serde_json::Value>, String> {
 
 #[tauri::command]
 async fn logout(state: tauri::State<'_, AppState>) -> Result<(), String> {
-    let mut auth_state = state.auth.write().await;
-    *auth_state = auth::AuthState::default();
+    let token = {
+        let mut auth_state = state.auth.write().await;
+        let t = auth_state.token.clone();
+        *auth_state = auth::AuthState::default();
+        t
+    };
     auth::clear_token().map_err(|e| e.to_string())?;
+    // revoke on the server too (0.3.4); failing that is logged, not fatal — the token is gone locally
+    if let Some(t) = token {
+        match auth::revoke_token(&t).await {
+            Ok(()) => add_log("Signed out — the desktop token was revoked on the server"),
+            Err(e) => add_log(&format!("Signed out locally; the server could not revoke the token: {}", e)),
+        }
+    }
     Ok(())
 }
 

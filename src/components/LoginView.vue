@@ -52,7 +52,7 @@ onMounted(async () => {
   unErr = await listen<string>("auth-error", (e) => { waiting.value = false; error.value = e.payload; });
   try {
     const saved = await invoke<{ email: string; password: string } | null>("get_saved_credentials");
-    if (saved) { email.value = saved.email; password.value = saved.password; remember.value = true; }
+    if (saved) { email.value = saved.email; remember.value = true; }   // e-mail only — the password is never stored (0.3.4)
   } catch { /* none saved */ }
 });
 
