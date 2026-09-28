@@ -41,6 +41,15 @@ pub fn open_window<R: Runtime>(app: &AppHandle<R>, w: &WidgetConfig) -> tauri::R
     }
     let win = builder.build()?;
 
+    // Sit on the desktop like Apple's own widgets: desktop-icon level (under every app window,
+    // still there when "click wallpaper to reveal desktop" pushes windows aside), on all Spaces.
+    // tao's always_on_bottom is only "below normal" and gets hidden with the rest (0.4.1).
+    #[cfg(target_os = "macos")]
+    {
+        let win2 = win.clone();
+        let _ = win.run_on_main_thread(move || unsafe { place_on_desktop(&win2) });
+    }
+
     // the frosted-glass look of the OS's own widgets
     #[cfg(target_os = "macos")]
     {
@@ -70,6 +79,27 @@ pub fn open_window<R: Runtime>(app: &AppHandle<R>, w: &WidgetConfig) -> tauri::R
     Ok(())
 }
 
+#[cfg(target_os = "macos")]
+unsafe fn place_on_desktop<R: Runtime>(win: &tauri::WebviewWindow<R>) {
+    use objc2::msg_send;
+    use objc2::runtime::AnyObject;
+    #[link(name = "CoreGraphics", kind = "framework")]
+    extern "C" {
+        fn CGWindowLevelForKey(key: i32) -> i32;
+    }
+    let Ok(ptr) = win.ns_window() else { return };
+    if ptr.is_null() {
+        return;
+    }
+    let ns = ptr as *mut AnyObject;
+    let level = CGWindowLevelForKey(18) as isize + 1; // kCGDesktopIconWindowLevelKey, one above Finder's icons
+    let _: () = msg_send![ns, setLevel: level];
+    // canJoinAllSpaces (1<<0) | stationary (1<<4) | ignoresCycle (1<<6)
+    let behaviour: usize = (1 << 0) | (1 << 4) | (1 << 6);
+    let _: () = msg_send![ns, setCollectionBehavior: behaviour];
+    let _: () = msg_send![ns, setHidesOnDeactivate: false];
+}
+
 fn save_position<R: Runtime>(app: &AppHandle<R>, id: &str, x: f64, y: f64) {
     let Some(state) = app.try_state::<AppState>() else { return };
     let cfg = state.config.clone();
@@ -86,9 +116,40 @@ fn save_position<R: Runtime>(app: &AppHandle<R>, id: &str, x: f64, y: f64) {
     });
 }
 
+/// Where a new widget lands: bottom-left of the main screen, cascading to the right — the
+/// top-left corner is where macOS keeps its own widgets. (0.4.0 used 40,80 and sat under them.)
+fn default_position<R: Runtime>(app: &AppHandle<R>, n: f64) -> (f64, f64) {
+    let (sw, sh, scale) = app
+        .primary_monitor()
+        .ok()
+        .flatten()
+        .map(|m| (m.size().width as f64, m.size().height as f64, m.scale_factor()))
+        .unwrap_or((1440.0, 900.0, 1.0));
+    let (sw, sh) = (sw / scale, sh / scale);
+    let per_row = ((sw - 80.0) / (WIDTH + 16.0)).floor().max(1.0);
+    let x = 40.0 + (n % per_row) * (WIDTH + 16.0);
+    let y = (sh - HEIGHT - 60.0 - (n / per_row).floor() * (HEIGHT + 16.0)).max(40.0);
+    (x, y)
+}
+
 /// Open every saved widget (app start).
 pub async fn open_all<R: Runtime>(app: &AppHandle<R>, state: &AppState) {
-    let widgets = state.config.read().await.widgets.clone();
+    let widgets = {
+        let mut config = state.config.write().await;
+        let mut moved = false;
+        for i in 0..config.widgets.len() {
+            if config.widgets[i].x == Some(40.0) && config.widgets[i].y == Some(80.0) {
+                let (x, y) = default_position(app, i as f64);
+                config.widgets[i].x = Some(x);
+                config.widgets[i].y = Some(y);
+                moved = true;
+            }
+        }
+        if moved {
+            let _ = config::save_config(&config);
+        }
+        config.widgets.clone()
+    };
     for w in &widgets {
         if let Err(e) = open_window(app, w) {
             crate::add_log(&format!("Widget {} could not open: {}", w.id, e));
@@ -174,14 +235,14 @@ async fn create(app: &AppHandle, state: &AppState, tool_id: &str) -> Result<Widg
         let mut config = state.config.write().await;
         let saved = config.tools.iter().find(|t| t.id == tool_id).map(|t| t.options.clone()).unwrap_or(serde_json::json!({}));
         let n = config.widgets.len() as f64;
+        let (x, y) = default_position(app, n);
         let w = WidgetConfig {
             id: uuid::Uuid::new_v4().to_string()[..8].to_string(),
             tool_id: def.id.clone(),
             options: saved,
             combine: def.file_field.ends_with("[]"),
-            // cascade new widgets from the top-left so they never land on top of each other
-            x: Some(40.0 + (n % 5.0) * (WIDTH + 16.0)),
-            y: Some(80.0 + (n / 5.0).floor() * (HEIGHT + 16.0)),
+            x: Some(x),
+            y: Some(y),
         };
         config.widgets.push(w.clone());
         config::save_config(&config).map_err(|e| e.to_string())?;
