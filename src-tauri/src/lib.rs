@@ -174,7 +174,7 @@ async fn fill_usage(result: &mut auth::AuthState) {
 }
 
 #[tauri::command]
-async fn login(state: tauri::State<'_, AppState>, email: String, password: String, remember: Option<bool>) -> Result<auth::AuthState, String> {
+async fn login(app: AppHandle, state: tauri::State<'_, AppState>, email: String, password: String, remember: Option<bool>) -> Result<auth::AuthState, String> {
     let mut result = auth::login(&email, &password).await.map_err(|e| e.to_string())?;
     fill_usage(&mut result).await;
     {
@@ -182,6 +182,7 @@ async fn login(state: tauri::State<'_, AppState>, email: String, password: Strin
         *auth_state = result.clone();
     }
     auth::save_token(&result.token.clone().unwrap_or_default()).map_err(|e| e.to_string())?;
+    let _ = app.emit("auth-changed", ());
     if remember.unwrap_or(false) {
         if let Err(e) = auth::save_credentials(&email, &password) {
             error!("Failed to save credentials: {}", e);
@@ -210,7 +211,7 @@ async fn start_browser_login(state: tauri::State<'_, AppState>) -> Result<String
 
 /// Browser sign-in, step 2 (also usable by the "paste code" fallback on the login page).
 #[tauri::command]
-async fn login_with_token(state: tauri::State<'_, AppState>, token: String) -> Result<auth::AuthState, String> {
+async fn login_with_token(app: AppHandle, state: tauri::State<'_, AppState>, token: String) -> Result<auth::AuthState, String> {
     let mut result = auth::validate_token(token.trim()).await.map_err(|e| e.to_string())?;
     fill_usage(&mut result).await;
     {
@@ -219,6 +220,7 @@ async fn login_with_token(state: tauri::State<'_, AppState>, token: String) -> R
     }
     auth::save_token(token.trim()).map_err(|e| e.to_string())?;
     let _ = auth::clear_credentials();
+    let _ = app.emit("auth-changed", ());
     Ok(result)
 }
 
@@ -253,7 +255,7 @@ fn handle_deep_link(app: &AppHandle, url: &str) {
     let app2 = app.clone();
     tauri::async_runtime::spawn(async move {
         let state = app2.state::<AppState>();
-        match login_with_token(state, token).await {
+        match login_with_token(app2.clone(), state, token).await {
             Ok(auth) => {
                 add_log(&format!("Signed in via browser as {}", auth.user.as_ref().map(|u| u.email.clone()).unwrap_or_default()));
                 let _ = app2.emit("auth-changed", ());
@@ -356,7 +358,7 @@ async fn get_saved_credentials() -> Result<Option<serde_json::Value>, String> {
 }
 
 #[tauri::command]
-async fn logout(state: tauri::State<'_, AppState>) -> Result<(), String> {
+async fn logout(app: AppHandle, state: tauri::State<'_, AppState>) -> Result<(), String> {
     let token = {
         let mut auth_state = state.auth.write().await;
         let t = auth_state.token.clone();
@@ -364,6 +366,7 @@ async fn logout(state: tauri::State<'_, AppState>) -> Result<(), String> {
         t
     };
     auth::clear_token().map_err(|e| e.to_string())?;
+    let _ = app.emit("auth-changed", ());
     // revoke on the server too (0.3.4); failing that is logged, not fatal — the token is gone locally
     if let Some(t) = token {
         match auth::revoke_token(&t).await {
@@ -375,13 +378,17 @@ async fn logout(state: tauri::State<'_, AppState>) -> Result<(), String> {
 }
 
 #[tauri::command]
-async fn check_auth(state: tauri::State<'_, AppState>) -> Result<auth::AuthState, String> {
+async fn check_auth(app: AppHandle, state: tauri::State<'_, AppState>) -> Result<auth::AuthState, String> {
     if let Ok(token) = auth::load_token() {
         match auth::validate_token(&token).await {
             Ok(mut result) => {
                 fill_usage(&mut result).await;
-                let mut auth_state = state.auth.write().await;
-                *auth_state = result.clone();
+                {
+                    let mut auth_state = state.auth.write().await;
+                    *auth_state = result.clone();
+                }
+                // widgets open before the main window has validated the session — tell them (0.4.3)
+                let _ = app.emit("auth-changed", ());
                 return Ok(result);
             }
             Err(e) => add_log(&format!("Saved session not valid: {}", e)),

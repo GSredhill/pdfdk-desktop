@@ -56,6 +56,20 @@ async function load() {
 async function refreshAuth() {
   try { auth.value = await invoke<AuthState>("get_auth_state"); } catch { auth.value = null; }
 }
+// Widgets open before the main window has validated the saved session. Ask the app to check
+// the saved token ourselves, and keep asking for a while in case the network is slow (0.4.3).
+let authTries = 0;
+let authTimer: ReturnType<typeof setTimeout> | null = null;
+async function settleAuth() {
+  await refreshAuth();
+  if (signedIn.value || authTries >= 20) return;
+  authTries += 1;
+  if (authTries === 1) {
+    try { auth.value = await invoke<AuthState>("check_auth"); } catch { /* keep polling */ }
+    if (signedIn.value) return;
+  }
+  authTimer = setTimeout(settleAuth, 3000);
+}
 
 let flashTimer: ReturnType<typeof setTimeout> | null = null;
 function flash(msg: string) {
@@ -121,7 +135,7 @@ let unChanged: UnlistenFn | null = null;
 
 onMounted(async () => {
   mq.addEventListener("change", onScheme);
-  await Promise.all([load(), refreshAuth()]);
+  await Promise.all([load(), settleAuth()]);
   unAuth = await listen("auth-changed", refreshAuth);
   unChanged = await listen("widget-changed", load);
   unDrag = await getCurrentWebview().onDragDropEvent((e) => {
@@ -136,6 +150,7 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   mq.removeEventListener("change", onScheme);
   unDrag?.(); unAuth?.(); unChanged?.();
+  if (authTimer) clearTimeout(authTimer);
 });
 </script>
 
