@@ -101,6 +101,7 @@ const strings: Record<string, { da: string; en: string }> = {
   // settings
   general: { da: "Generelt", en: "General" },
   language: { da: "Sprog", en: "Language" },
+  languageDesc: { da: "Valgt efter computerens sprog ved første start. Værktøjsnavne og indstillinger følger med.", en: "Picked from the computer's language at first start. Tool names and options follow." },
   theme: { da: "Udseende", en: "Appearance" },
   themeSystem: { da: "Som systemet", en: "Follow system" },
   themeLight: { da: "Lyst", en: "Light" },

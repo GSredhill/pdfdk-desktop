@@ -411,6 +411,14 @@ fn get_catalog_path() -> Result<PathBuf, ConfigError> {
     Ok(app_config_dir()?.join("tools_catalog.json"))
 }
 
+/// First start: follow the OS language (macOS, Windows, Linux). Danish stays Danish;
+/// everything else gets English. The user can still change it under Indstillinger → Sprog,
+/// and a saved config is never overridden (0.4.4).
+pub fn os_language() -> String {
+    let loc = sys_locale::get_locale().unwrap_or_default().to_ascii_lowercase();
+    if loc.starts_with("da") { "da".to_string() } else { "en".to_string() }
+}
+
 pub fn load_config() -> Result<AppConfig, ConfigError> {
     let path = get_config_path()?;
     if path.exists() {
@@ -419,7 +427,9 @@ pub fn load_config() -> Result<AppConfig, ConfigError> {
         config.migrate_keys();
         Ok(config)
     } else {
-        Ok(AppConfig::default())
+        let mut config = AppConfig::default();
+        config.general.language = os_language();
+        Ok(config)
     }
 }
 

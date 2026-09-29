@@ -25,7 +25,7 @@ async function checkUpdates() {
     <section class="sv-sec card">
       <h3 class="sv-h">{{ t("general") }}</h3>
       <div class="sv-row">
-        <div class="sv-lbl">{{ t("language") }}</div>
+        <div class="sv-lbl">{{ t("language") }}<span class="sv-desc">{{ t("languageDesc") }}</span></div>
         <div class="seg">
           <button class="seg-btn" :class="{ on: config.general.language === 'da' }" @click="set('language', 'da')">Dansk</button>
           <button class="seg-btn" :class="{ on: config.general.language === 'en' }" @click="set('language', 'en')">English</button>
