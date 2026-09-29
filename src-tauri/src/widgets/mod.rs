@@ -299,7 +299,8 @@ pub async fn widget_process(app: AppHandle, state: tauri::State<'_, AppState>, i
     };
     let def = find_tool(&state, &widget.tool_id).await.ok_or_else(|| format!("Unknown tool: {}", widget.tool_id))?;
     let tc = tool_config(&def, &widget);
-    Ok(run_files(&app, &state, tc, &lang, paths, widget.combine).await)
+    let target = label(&id);
+    Ok(run_files(&app, &state, tc, &lang, paths, widget.combine, Some(&target)).await)
 }
 
 #[tauri::command]

@@ -47,6 +47,9 @@ const strings: Record<string, { da: string; en: string }> = {
   runsThisMonth: { da: "kørsler denne måned", en: "runs this month" },
   updateTo: { da: "Opdater til v{v}", en: "Update to v{v}" },
   updating: { da: "Opdaterer…", en: "Updating…" },
+  restartFor: { da: "Genstart til v{v}", en: "Restart for v{v}" },
+  autoUpdate: { da: "Automatiske opdateringer", en: "Automatic updates" },
+  autoUpdateDesc: { da: "Nye versioner installeres af sig selv, når ingen filer er i gang. Genstart, når appen beder om det.", en: "New versions install by themselves when no files are running. Restart when the app asks." },
 
   // tools view
   watchedFolders: { da: "Overvågede mapper", en: "Watched folders" },

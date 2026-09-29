@@ -115,7 +115,7 @@ fn user_from(api: ApiUser) -> (User, Option<String>) {
 
 /// POST /api/auth/login
 pub async fn login(email: &str, password: &str) -> Result<AuthState, AuthError> {
-    let client = Client::new();
+    let client = crate::api::http_client();
     let response = client
         .post(format!("{}/auth/login", api_base()))
         .header("Content-Type", "application/json")
@@ -162,7 +162,7 @@ pub async fn login(email: &str, password: &str) -> Result<AuthState, AuthError> 
 /// (v0.2 called /api/user, which no longer exists: every saved session
 /// looked expired.)
 pub async fn validate_token(token: &str) -> Result<AuthState, AuthError> {
-    let client = Client::new();
+    let client = crate::api::http_client();
     let response = client
         .get(format!("{}/auth/me", api_base()))
         .header("Authorization", format!("Bearer {}", token))
@@ -202,7 +202,7 @@ pub async fn validate_token(token: &str) -> Result<AuthState, AuthError> {
 /// POST /api/auth/logout — revoke the desktop token on the server so it stops working
 /// everywhere, not only on this machine (0.3.4). Best effort: offline logout still succeeds.
 pub async fn revoke_token(token: &str) -> Result<(), AuthError> {
-    let client = Client::new();
+    let client = crate::api::http_client();
     let response = client
         .post(format!("{}/auth/logout", api_base()))
         .header("Authorization", format!("Bearer {}", token))

@@ -55,9 +55,16 @@ pub struct GeneralSettings {
     pub show_notifications: bool,
     /// "da" or "en" — the app follows the website's default, Danish
     pub language: String,
+    /// install updates by itself when no job is running (0.4.5)
+    #[serde(default = "default_true")]
+    pub auto_update: bool,
     /// "system", "light" or "dark"
     #[serde(default = "default_theme")]
     pub theme: String,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 fn default_theme() -> String {
@@ -271,6 +278,7 @@ impl Default for AppConfig {
                 start_on_login: true,
                 start_minimized: true,
                 show_notifications: true,
+                auto_update: true,
                 language: "da".to_string(),
                 theme: "system".to_string(),
             },

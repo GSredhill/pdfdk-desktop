@@ -539,7 +539,17 @@ pub struct FileResult {
 
 /// Run files through one tool config: jobs are tracked (Aktivitet), the user is notified,
 /// output lands next to each input. Shared by the drop zone, Open with and the widgets.
-pub(crate) async fn run_files(app: &AppHandle, state: &AppState, tc: ToolConfig, lang: &str, paths: Vec<String>, combine: bool) -> Vec<FileResult> {
+/// Per-file progress for a window (the widgets): {done, total, file, ok}.
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RunProgress {
+    pub done: usize,
+    pub total: usize,
+    pub file: String,
+    pub ok: bool,
+}
+
+pub(crate) async fn run_files(app: &AppHandle, state: &AppState, tc: ToolConfig, lang: &str, paths: Vec<String>, combine: bool, progress_to: Option<&str>) -> Vec<FileResult> {
     let label = tool_label(&tc, lang);
     let token = state.auth.read().await.token.clone();
     let mut results = Vec::new();
@@ -562,20 +572,30 @@ pub(crate) async fn run_files(app: &AppHandle, state: &AppState, tc: ToolConfig,
             }
         };
     }
+    let total = paths.len();
     for p in paths {
         let path = PathBuf::from(&p);
+        let file_name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+        if let Some(label) = progress_to {
+            let _ = app.emit_to(label, "widget-progress", RunProgress { done: results.len(), total, file: file_name.clone(), ok: true });
+        }
         let job_id = job_add(processor::Job::new(&tc.id, &label, &p));
         job_update(&job_id, |j| j.set_processing());
         let parent = path.parent().map(Path::to_path_buf).unwrap_or_else(|| PathBuf::from("."));
-        match watcher::run_tool(&path, &tc, token.clone(), Some(&parent)).await {
+        let ok = match watcher::run_tool(&path, &tc, token.clone(), Some(&parent)).await {
             Ok(out) => {
                 job_update(&job_id, |j| j.set_completed(&out.to_string_lossy()));
                 results.push(FileResult { input: p, output: Some(out.to_string_lossy().to_string()), error: None });
+                true
             }
             Err(e) => {
                 job_update(&job_id, |j| j.set_failed(&e.to_string()));
                 results.push(FileResult { input: p, output: None, error: Some(e.to_string()) });
+                false
             }
+        };
+        if let Some(label) = progress_to {
+            let _ = app.emit_to(label, "widget-progress", RunProgress { done: results.len(), total, file: file_name, ok });
         }
     }
     let ok = results.iter().filter(|r| r.output.is_some()).count();
@@ -604,7 +624,7 @@ async fn process_files(app: AppHandle, state: tauri::State<'_, AppState>, tool_i
             accepts: def.accepts.clone(), output: Some(def.output.clone()), name: Some(def.name.clone()),
         }, config.general.language.clone())
     };
-    Ok(run_files(&app, &state, tc, &lang, paths, combine.unwrap_or(false)).await)
+    Ok(run_files(&app, &state, tc, &lang, paths, combine.unwrap_or(false), None).await)
 }
 
 #[tauri::command]

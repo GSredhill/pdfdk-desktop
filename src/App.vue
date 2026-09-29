@@ -8,7 +8,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { check, type Update } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { t, lang } from "./i18n";
-import { emptyAuth, type AppConfig, type AuthState, type ToolDefinition } from "./types";
+import { emptyAuth, type AppConfig, type AuthState, type Job, type ToolDefinition } from "./types";
 import LoginView from "./components/LoginView.vue";
 import ToolsView from "./components/ToolsView.vue";
 import ActivityView from "./components/ActivityView.vue";
@@ -28,6 +28,7 @@ const version = ref("");
 const update = ref<Update | null>(null);
 const updating = ref(false);
 const updateError = ref("");
+const updateReady = ref(false);   // installed in the background, waiting for a restart
 const droppedFiles = ref<string[]>([]);
 const dragOver = ref(false);
 
@@ -100,14 +101,43 @@ async function checkForUpdates(): Promise<boolean> {
     const u = await check();
     // markRaw: the Update object has private class fields, which cannot be read through
     // Vue's reactive proxy — that made every install fail with "Cannot read private member"
-    if (u) { update.value = markRaw(u); return true; }
+    if (u) {
+      update.value = markRaw(u);
+      // silent updates (0.4.5): install by ourselves when nothing is running
+      if (config.value?.general.autoUpdate !== false) autoInstall();
+      return true;
+    }
   } catch (e) {
     console.log("updater:", e);
   }
   return false;
 }
+/// Download + install without asking; restart right away when nobody is looking at the
+/// window, otherwise show a "restart" button. Waits while jobs are running.
+async function autoInstall() {
+  if (!update.value || updating.value || updateReady.value) return;
+  const jobs = await invoke<Job[]>("get_jobs").catch(() => [] as Job[]);
+  if (jobs.some((j) => j.status === "processing" || j.status === "queued")) {
+    setTimeout(autoInstall, 5 * 60 * 1000);
+    return;
+  }
+  updating.value = true;
+  try {
+    await update.value.downloadAndInstall();
+    updateReady.value = true;
+    invoke("log_client", { message: `Update ${update.value.version} installed in the background` }).catch(() => {});
+    if (document.visibilityState === "hidden") await relaunch();
+  } catch (e) {
+    const msg = String(e);
+    updateError.value = msg;
+    invoke("log_client", { message: `Background update to ${update.value?.version} failed: ${msg}` }).catch(() => {});
+  } finally {
+    updating.value = false;
+  }
+}
 async function installUpdate() {
   if (!update.value) return;
+  if (updateReady.value) { await relaunch(); return; }
   updating.value = true;
   try {
     await update.value.downloadAndInstall();
@@ -208,7 +238,7 @@ onBeforeUnmount(() => {
         </nav>
         <div class="hdr-r">
           <button v-if="update" class="btn btn-sm btn-primary" :disabled="updating" @click="installUpdate" :title="updateError">
-            {{ updating ? t("updating") : t("updateTo", { v: update.version }) }}
+            {{ updating ? t("updating") : updateReady ? t("restartFor", { v: update.version }) : t("updateTo", { v: update.version }) }}
           </button>
           <span v-if="updateError" class="hdr-uperr" :title="updateError">{{ t("updateFailed") }} · <a href="#" @click.prevent="openUrl(`${siteBase}/desktop`)">{{ t("downloadManually") }}</a></span>
           <span v-if="usageText" class="hdr-usage mono">{{ usageText }}</span>

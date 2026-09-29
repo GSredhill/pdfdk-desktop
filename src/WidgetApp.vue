@@ -22,6 +22,7 @@ const notice = ref("");
 const dragOver = ref(false);
 const running = ref(false);
 const runningCount = ref(0);
+const progress = ref<{ done: number; total: number; file: string } | null>(null);
 const results = ref<FileResult[] | null>(null);
 
 const signedIn = computed(() => !!auth.value?.isAuthenticated);
@@ -89,6 +90,7 @@ async function handleDrop(paths: string[]) {
   if (ok.length < paths.length) flash(t("widgetSkipped", { n: paths.length - ok.length }));
   running.value = true;
   runningCount.value = ok.length;
+  progress.value = ok.length > 1 ? { done: 0, total: ok.length, file: baseName(ok[0]) } : null;
   results.value = null;
   try {
     results.value = await invoke<FileResult[]>("widget_process", { id, paths: ok });
@@ -96,6 +98,7 @@ async function handleDrop(paths: string[]) {
     results.value = ok.map((p) => ({ input: p, output: null, error: String(e) }));
   } finally {
     running.value = false;
+    progress.value = null;
   }
 }
 
@@ -132,12 +135,16 @@ function openMain() { invoke("widget_show_main").catch(() => {}); }
 let unDrag: UnlistenFn | null = null;
 let unAuth: UnlistenFn | null = null;
 let unChanged: UnlistenFn | null = null;
+let unProgress: UnlistenFn | null = null;
 
 onMounted(async () => {
   mq.addEventListener("change", onScheme);
   await Promise.all([load(), settleAuth()]);
   unAuth = await listen("auth-changed", refreshAuth);
   unChanged = await listen("widget-changed", load);
+  unProgress = await listen<{ done: number; total: number; file: string; ok: boolean }>("widget-progress", (e) => {
+    if (running.value && e.payload.total > 1) progress.value = { done: e.payload.done, total: e.payload.total, file: e.payload.file };
+  });
   unDrag = await getCurrentWebview().onDragDropEvent((e) => {
     if (e.payload.type === "enter" || e.payload.type === "over") dragOver.value = true;
     else if (e.payload.type === "leave") dragOver.value = false;
@@ -149,7 +156,7 @@ onMounted(async () => {
 });
 onBeforeUnmount(() => {
   mq.removeEventListener("change", onScheme);
-  unDrag?.(); unAuth?.(); unChanged?.();
+  unDrag?.(); unAuth?.(); unChanged?.(); unProgress?.();
   if (authTimer) clearTimeout(authTimer);
 });
 </script>
@@ -173,7 +180,12 @@ onBeforeUnmount(() => {
     </div>
     <div v-else-if="running" class="w-body w-msg">
       <div class="w-spin"></div>
-      <p>{{ t("widgetRunning", { n: runningCount }) }}</p>
+      <template v-if="progress">
+        <div class="w-bar"><span :style="{ width: Math.round((progress.done / progress.total) * 100) + '%' }"></span></div>
+        <p class="w-prog">{{ progress.done }} / {{ progress.total }}</p>
+        <p class="w-prog-file">{{ progress.file }}</p>
+      </template>
+      <p v-else>{{ t("widgetRunning", { n: runningCount }) }}</p>
     </div>
     <div v-else-if="results" class="w-body w-res">
       <div class="w-list">
@@ -243,6 +255,10 @@ html[data-theme="dark"] .w.over { background: color-mix(in srgb, var(--acc) 14%,
 .w-zone svg { width: 26px; height: 26px; }
 .w-zone p { margin: 0; font-size: 12px; font-weight: 600; }
 
+.w-bar { width: 70%; height: 5px; border-radius: 999px; background: color-mix(in srgb, var(--text) 12%, transparent); overflow: hidden; }
+.w-bar span { display: block; height: 100%; background: var(--acc); border-radius: 999px; transition: width .25s; }
+.w-prog { margin: 0; font-size: 13px; font-weight: 800; color: var(--text); font-variant-numeric: tabular-nums; }
+.w-prog-file { margin: 0; font-size: 10.5px; color: var(--muted); max-width: 90%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .w-spin { width: 26px; height: 26px; border-radius: 50%; border: 2.5px solid color-mix(in srgb, var(--acc) 25%, transparent); border-top-color: var(--acc); animation: w-rot .8s linear infinite; }
 @keyframes w-rot { to { transform: rotate(360deg); } }
 

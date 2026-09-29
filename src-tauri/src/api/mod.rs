@@ -226,6 +226,24 @@ fn mime_for(path: &Path) -> &'static str {
     }
 }
 
+/// Every request says who we are (`X-PDFDK-Client: desktop/<version>`), so the site can tag
+/// jobs from the app and Admin › Jobs can filter on them (0.4.5).
+pub const CLIENT_HEADER: &str = "X-PDFDK-Client";
+pub fn client_id() -> String {
+    format!("desktop/{}", env!("CARGO_PKG_VERSION"))
+}
+pub fn default_headers() -> reqwest::header::HeaderMap {
+    let mut h = reqwest::header::HeaderMap::new();
+    if let Ok(v) = reqwest::header::HeaderValue::from_str(&client_id()) {
+        h.insert(CLIENT_HEADER, v);
+    }
+    h
+}
+/// A plain client with the identity header (auth calls use this).
+pub fn http_client() -> Client {
+    Client::builder().default_headers(default_headers()).build().unwrap_or_else(|_| Client::new())
+}
+
 /// PDF.dk API Client
 pub struct PdfDkClient {
     client: Client,
@@ -237,6 +255,7 @@ impl PdfDkClient {
     pub fn new(auth_token: Option<String>) -> Self {
         let client = Client::builder()
             .timeout(Duration::from_secs(600))
+            .default_headers(default_headers())
             .build()
             .expect("Failed to create HTTP client");
         let session_id = Uuid::new_v4().to_string();

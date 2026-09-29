@@ -44,6 +44,10 @@ async function checkUpdates() {
         <button class="switch" :class="{ on: config.general.startOnLogin }" :aria-pressed="config.general.startOnLogin" @click="set('startOnLogin', !config.general.startOnLogin)"></button>
       </div>
       <div class="sv-row">
+        <div class="sv-lbl">{{ t("autoUpdate") }}<span class="sv-desc">{{ t("autoUpdateDesc") }}</span></div>
+        <button class="switch" :class="{ on: config.general.autoUpdate !== false }" :aria-pressed="config.general.autoUpdate !== false" @click="set('autoUpdate', config.general.autoUpdate === false)"></button>
+      </div>
+      <div class="sv-row">
         <div class="sv-lbl">{{ t("notifications") }}<span class="sv-desc">{{ t("notificationsDesc") }}</span></div>
         <button class="switch" :class="{ on: config.general.showNotifications }" :aria-pressed="config.general.showNotifications" @click="set('showNotifications', !config.general.showNotifications)"></button>
       </div>

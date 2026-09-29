@@ -68,6 +68,7 @@ export interface AppConfig {
     startOnLogin: boolean;
     startMinimized: boolean;
     showNotifications: boolean;
+    autoUpdate?: boolean;
     language: string;
     theme: string;
   };
